@@ -1,73 +1,78 @@
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  sendOtp — Full production implementation                               ║
+// ║  sendOtp — Issues a college-email one-time passcode                      ║
+// ║                                                                          ║
+// ║  Privacy: the response is byte-identical whether or not the domain        ║
+// ║  belongs to a registered college, so the endpoint cannot be used to       ║
+// ║  enumerate which institutions are on the platform.                       ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 import * as functions from 'firebase-functions/v1';
-import nodemailer from 'nodemailer';
 import { z } from 'zod';
 import { db, FieldValue } from '../../config/firebase';
 import { validate, Schemas } from '../../middleware/validate.middleware';
 import { RateLimits } from '../../middleware/rateLimit.middleware';
 import { Errors, handleUnknownError } from '../../utils/errors';
 import { generateOtp, hashOtp, getOtpExpiry, maskEmail, otpRecordId } from '../../utils/otp.utils';
+import { deliverEmail, EmailTemplates, isEmailConfigured } from '../../utils/email.utils';
 import { createLogger } from '../../utils/logger';
-import { COLLECTIONS } from '../../../../../shared/constants';
+import { COLLECTIONS, OTP_CONSTANTS } from '../../../../../shared/constants';
 import { CollegeService } from '../../services/college.service';
 
 const log = createLogger('sendOtp');
-
-async function deliverOtp(email: string, otp: string, collegeName: string): Promise<void> {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || user;
-
-  if (!host || !user || !pass || !from || !Number.isInteger(port) || port < 1 || port > 65535) {
-    throw Errors.preconditionFailed('Email delivery is not configured. Please contact support.');
-  }
-
-  const transporter = nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
-  await transporter.sendMail({
-    from, to: email, subject: `Your ${collegeName} Campus Connector code`,
-    text: `Your Campus Connector verification code is ${otp}. It expires in 10 minutes. Do not share this code with anyone.`,
-    html: `<p>Your Campus Connector verification code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes. Do not share it with anyone.</p>`,
-  });
-}
 
 const sendOtpSchema = z.object({
   email: Schemas.anyEmail,
   consent_given: z.boolean().refine((v) => v === true, {
     message: 'You must agree to the Terms of Service and Privacy Policy.',
   }),
-  consent_version: z.string().default('1.0.0'),
+  consent_version: z.string().max(20).default('1.0.0'),
 });
+
+/**
+ * Uniform response shape. Never varies by whether the college is registered.
+ */
+function uniformResponse(email: string) {
+  return {
+    success: true as const,
+    data: {
+      message: 'If your college is registered, a verification code is on its way.',
+      masked_email: maskEmail(email),
+      expires_in_minutes: OTP_CONSTANTS.EXPIRY_MINUTES,
+    },
+  };
+}
 
 export const sendOtp = functions
   .region('asia-south1')
-  .runWith({ memory: '256MB', timeoutSeconds: 60 })
+  .runWith({
+    memory: '256MB',
+    timeoutSeconds: 60,
+    // Declared so Cloud Functions injects them at runtime. Set them with
+    // `firebase functions:secrets:set SMTP_HOST` (etc.); they are never
+    // committed, and sendOtp reports a clear configuration error if absent.
+    secrets: ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'],
+  })
   .https.onCall(async (data, _context) => {
     try {
       const { email, consent_given, consent_version } = validate(sendOtpSchema, data);
 
-      // Rate limit: max 3 OTPs per email per 10 minutes
+      // Rate limit before any lookup so the endpoint cannot be used as an oracle.
       await RateLimits.sendOtp(email);
 
-      // Verify the email domain belongs to a registered, approved college
-      const college = await CollegeService.getByDomain(email);
-      if (!college) {
-        // Return same response as valid to avoid email enumeration
-        log.warn(`OTP request for unregistered domain: ${maskEmail(email)}`);
-        return {
-          success: true,
-          data: {
-            message: 'If your college is registered, you will receive an OTP shortly.',
-            masked_email: maskEmail(email),
-          },
-        };
+      // A misconfigured deployment must fail loudly rather than pretend to send.
+      if (!isEmailConfigured() && !process.env.FUNCTIONS_EMULATOR) {
+        log.error('SMTP is not configured — cannot deliver verification codes.');
+        throw Errors.preconditionFailed(
+          'E-mail delivery is not configured on the server. Please contact support.'
+        );
       }
 
-      // Generate & hash OTP
+      const college = await CollegeService.getByDomain(email);
+      if (!college) {
+        log.warn(`OTP request for unregistered domain: ${maskEmail(email)}`);
+        return uniformResponse(email);
+      }
+
       const otp = generateOtp();
       const otpHash = await hashOtp(otp);
       const expiresAt = getOtpExpiry();
@@ -86,33 +91,24 @@ export const sendOtp = functions
         created_at: FieldValue.serverTimestamp(),
       });
 
-      // Send OTP via email (or SMS in future)
       if (process.env.FUNCTIONS_EMULATOR) {
-        // In emulator — log OTP for easy testing
-        log.info(`[DEV] OTP for ${maskEmail(email)}: ${otp}`);
+        // Local development: surface the code in the emulator log instead of
+        // requiring live SMTP credentials.
+        log.info(`[emulator] OTP for ${maskEmail(email)}: ${otp}`);
       } else {
         try {
-          await deliverOtp(email, otp, college.name);
+          await deliverEmail(email, EmailTemplates.otp(otp, college.name));
           log.info(`OTP delivered to ${maskEmail(email)}`);
         } catch (deliveryError) {
           // Remove an undelivered code so it can never be used later.
-          await otpReference.delete();
+          await otpReference.delete().catch(() => undefined);
           log.error(`OTP delivery failed for ${maskEmail(email)}`, deliveryError);
           if (deliveryError instanceof functions.https.HttpsError) throw deliveryError;
           throw Errors.internal('Unable to send the verification code. Please try again later.');
         }
       }
 
-      return {
-        success: true,
-        data: {
-          message: 'OTP sent to your college email.',
-          masked_email: maskEmail(email),
-          college_name: college.name,
-          college_short_name: college.short_name,
-          expires_in_minutes: 10,
-        },
-      };
+      return uniformResponse(email);
     } catch (error) {
       handleUnknownError(error, 'sendOtp');
     }

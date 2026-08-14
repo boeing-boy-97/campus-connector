@@ -5,6 +5,7 @@
 import { db, FieldValue } from '../config/firebase';
 import { Errors } from '../utils/errors';
 import { createLogger } from '../utils/logger';
+import { COLLECTIONS } from '../../../../shared/constants';
 import { createHash } from 'node:crypto';
 
 const log = createLogger('rateLimit');
@@ -30,7 +31,7 @@ export interface RateLimitConfig {
 export async function checkRateLimit(config: RateLimitConfig): Promise<void> {
   const { key, limit, windowSeconds, message } = config;
   const documentId = createHash('sha256').update(key).digest('hex');
-  const docRef = db.collection('rate_limits').doc(documentId);
+  const docRef = db.collection(COLLECTIONS.RATE_LIMITS).doc(documentId);
   const now = Date.now();
   const windowStart = now - windowSeconds * 1000;
 

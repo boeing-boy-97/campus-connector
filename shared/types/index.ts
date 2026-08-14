@@ -65,6 +65,13 @@ export interface Student {
   rejection_reason?: string;
   verified_at?: FirestoreTimestamp;
   verification_status: VerificationStatus;
+  /** Status held before a suspension, restored on reinstatement. */
+  previous_verification_status?: VerificationStatus;
+  suspended_at?: FirestoreTimestamp;
+  suspended_by?: string;
+  suspension_reason?: string;
+  reinstated_at?: FirestoreTimestamp;
+  reinstated_by?: string;
   intent_flags: IntentFlags;
   interests: string[];
   linkedin_url?: string;

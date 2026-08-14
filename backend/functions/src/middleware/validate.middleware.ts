@@ -2,18 +2,23 @@
 // ║  validate.middleware.ts — Zod schema validation wrapper                  ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import { z, ZodSchema } from 'zod';
+import { z } from 'zod';
 import { Errors } from '../utils/errors';
 
 /**
  * Validates input data against a Zod schema.
  * Throws a formatted invalid-argument error if validation fails.
  *
+ * The generic is parameterised over the schema itself (rather than a single
+ * `T` for both input and output) so schemas using `.default()`, `.transform()`
+ * or `.catch()` infer their *output* type correctly — with a single-`T`
+ * signature, defaulted fields were inferred as possibly-undefined.
+ *
  * @param schema - Zod schema to validate against
  * @param data - Raw input data from the Cloud Function call
  * @returns Typed, parsed, and transformed data
  */
-export function validate<T>(schema: ZodSchema<T>, data: unknown): T {
+export function validate<S extends z.ZodTypeAny>(schema: S, data: unknown): z.output<S> {
   const result = schema.safeParse(data);
 
   if (!result.success) {
@@ -40,21 +45,33 @@ export const Schemas = {
     .max(128)
     .regex(/^[^/\s]+$/, 'Invalid document ID'),
 
-  /** College email (enforced as .edu domain or .ac.in) */
+  /**
+   * College email (enforced as a .edu / .ac.in domain).
+   *
+   * Normalisation happens BEFORE validation. Validating first rejected any
+   * address with surrounding whitespace — which mobile keyboards and copy-paste
+   * add routinely — so a legitimate student saw "Invalid email address".
+   */
   collegeEmail: z.string()
-    .email('Invalid email address')
-    .max(254)
-    .transform((e) => e.toLowerCase().trim())
+    .max(255)
+    .transform((value) => value.trim().toLowerCase())
+    .pipe(z.string().email('Invalid email address').max(254))
     .refine(
-      (e) => {
-        const domain = e.split('@')[1] || '';
-        return domain.includes('.edu') || domain.includes('.ac.in') || domain.includes('.edu.in');
+      (value) => {
+        const domain = value.split('@')[1] || '';
+        return domain.endsWith('.edu')
+          || domain.endsWith('.ac.in')
+          || domain.endsWith('.edu.in')
+          || domain.includes('.edu.');
       },
       'Please use your official college email address (.edu / .ac.in)'
     ),
 
-  /** Generic .edu-style email without strict domain check (used for lookup) */
-  anyEmail: z.string().email().max(254).transform((e) => e.toLowerCase().trim()),
+  /** Any well-formed email, normalised. Domain eligibility is checked separately. */
+  anyEmail: z.string()
+    .max(255)
+    .transform((value) => value.trim().toLowerCase())
+    .pipe(z.string().email('Invalid email address').max(254)),
 
   /** OTP code */
   otp: z.string()
@@ -64,8 +81,29 @@ export const Schemas = {
   /** Hex color */
   hexColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid color format (e.g. #6C63FF)'),
 
-  /** URL */
-  url: z.string().url('Invalid URL'),
+  /** URL — https only, so links rendered in a client cannot use javascript: */
+  url: z.string().url('Invalid URL').refine(
+    (value) => value.startsWith('https://'),
+    'URL must use https://'
+  ),
+
+  /**
+   * An https profile link on a specific host (e.g. linkedin.com, github.com).
+   * Restricting the host prevents the field from being used to distribute
+   * arbitrary links to other students.
+   */
+  profileUrl: (host: string) =>
+    z.string().url('Invalid URL').max(300).refine((value) => {
+      try {
+        const parsed = new URL(value);
+        return (
+          parsed.protocol === 'https:'
+          && (parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))
+        );
+      } catch {
+        return false;
+      }
+    }, `Must be an https link on ${host}`),
 
   /** Domain name */
   domain: z.string()

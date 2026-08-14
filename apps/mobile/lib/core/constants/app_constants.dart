@@ -33,8 +33,14 @@ class AppConstants {
   static const int minProfilePhotos = 1;
   static const int maxInterests = 15;
   static const int minInterests = 1;
-  static const int maxMessageLength = 1000;
+  // Must match CHAT_LIMITS.MAX_MESSAGE_LENGTH in shared/constants — the server
+  // rejects anything longer, so a lower client cap silently truncated nothing
+  // but a higher one produced avoidable validation errors.
+  static const int maxMessageLength = 2000;
   static const int maxIntroMessageLength = 200;
+  static const int maxMediaSizeMb = 25;
+  static const int maxVerificationPhotoMb = 8;
+  static const int minAge = 18;
 
   // ── Image constraints ─────────────────────────────────────────────────────
   static const int imageQuality = 85;

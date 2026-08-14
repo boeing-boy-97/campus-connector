@@ -8,6 +8,7 @@ import {
   getBlockedUserIds,
   areUsersBlocked,
   blockDocumentId,
+  getMatchDocsForParticipant,
   participantPairDocumentId,
   toPublicStudentProfile,
 } from '../utils/firestore.utils';
@@ -46,8 +47,10 @@ export const MatchService = {
   ): Promise<{ profiles: StudentPublicProfile[]; has_more: boolean; next_cursor: string | null }> {
     const { gender_filter, year_filter, page_size = PAGINATION.DISCOVERY_PAGE_SIZE, last_doc_id } = filters;
 
-    // Exclude blocks, pending requests, and active matches in both directions.
-    const [blockedIds, sentRequests, receivedRequests, matchesAsA, matchesAsB] = await Promise.all([
+    // Exclude blocks, pending requests, and existing matches in both directions.
+    // Declined/expired requests are intentionally NOT excluded, so a student can
+    // be discovered again later.
+    const [blockedIds, sentRequests, receivedRequests, existingMatches] = await Promise.all([
       getBlockedUserIds(uid),
       db.collection(COLLECTIONS.CONNECT_REQUESTS)
         .where('from_id', '==', uid)
@@ -57,20 +60,15 @@ export const MatchService = {
         .where('to_id', '==', uid)
         .where('status', '==', ConnectRequestStatus.PENDING)
         .get(),
-      db.collection(COLLECTIONS.MATCHES)
-        .where('student_a_id', '==', uid)
-        .where('status', '==', MatchStatus.ACTIVE)
-        .get(),
-      db.collection(COLLECTIONS.MATCHES)
-        .where('student_b_id', '==', uid)
-        .where('status', '==', MatchStatus.ACTIVE)
-        .get(),
+      getMatchDocsForParticipant(uid, MatchStatus.ACTIVE),
     ]);
     const excludedIds = new Set(blockedIds);
     sentRequests.docs.forEach((document) => excludedIds.add(document.data().to_id));
     receivedRequests.docs.forEach((document) => excludedIds.add(document.data().from_id));
-    matchesAsA.docs.forEach((document) => excludedIds.add(document.data().student_b_id));
-    matchesAsB.docs.forEach((document) => excludedIds.add(document.data().student_a_id));
+    existingMatches.forEach((document) => {
+      const match = document.data();
+      excludedIds.add(match.student_a_id === uid ? match.student_b_id : match.student_a_id);
+    });
 
     let query: FirebaseFirestore.Query = db.collection(COLLECTIONS.STUDENTS)
       .where('college_id', '==', collegeId)
@@ -87,20 +85,33 @@ export const MatchService = {
       if (lastSnap.exists) query = query.startAfter(lastSnap);
     }
 
-    // Scan beyond one page because blocked/connected profiles are filtered in memory.
-    const scanLimit = Math.min(page_size * 3 + 1, 151);
+    // A deterministic sort is required for cursor pagination to be stable.
+    query = query.orderBy('created_at', 'desc');
+
+    // Blocked/connected profiles are filtered in memory, so scan past one page.
+    const scanLimit = Math.min(page_size * 4 + 1, 200);
     const snap = await query.limit(scanLimit).get();
+
     const candidates = snap.docs.filter((document) => {
       if (excludedIds.has(document.id)) return false;
       if (!filters.match_type) return true;
       return document.data().intent_flags?.[filters.match_type] === true;
     });
+
     const pageDocuments = candidates.slice(0, page_size);
     const profiles = pageDocuments.map((document) => toPublicStudentProfile({
       ...(document.data() as Student),
       id: document.id,
     }));
-    const hasMore = candidates.length > page_size || snap.docs.length === scanLimit;
+
+    // More results exist if either more candidates were already found, or the
+    // scan filled its limit (so unscanned documents remain).
+    const scanExhausted = snap.docs.length < scanLimit;
+    const hasMore = candidates.length > page_size || !scanExhausted;
+
+    // The cursor must be the last document *scanned* when we consumed the whole
+    // scan window (otherwise the skipped tail would be re-scanned forever), and
+    // the last document *returned* when candidates remain within the window.
     const cursorDocument = candidates.length > page_size
       ? pageDocuments.at(-1)
       : snap.docs.at(-1);

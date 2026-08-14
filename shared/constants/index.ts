@@ -67,8 +67,8 @@ export const COLLECTIONS = {
   BLOCKS: 'blocks',
   NOTIFICATIONS: 'notifications',
   AUDIT_LOGS: 'audit_logs',
-  OTP_STORE: 'otp_store',
   OTP_RECORDS: 'otp_records',
+  RATE_LIMITS: 'rate_limits',
 } as const;
 
 // ─── Firebase Storage Paths ───────────────────────────────────────────────────

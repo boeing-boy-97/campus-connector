@@ -61,7 +61,6 @@ class LoginState {
 class LoginNotifier extends StateNotifier<LoginState> {
   LoginNotifier() : super(const LoginState());
 
-  static final _functions = FirebaseFunctions.instanceFor(region: AppConstants.functionsRegion);
   Timer? _resendTimer;
 
   Future<void> sendOtp(String email) async {
@@ -73,31 +72,38 @@ class LoginNotifier extends StateNotifier<LoginState> {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
-      final result = await _functions.httpsCallable('sendOtp').call({
-        'email': email.trim().toLowerCase(),
-        'consent_given': true,
-        'consent_version': '1.0.0',
-      });
+      // Routed through FirebaseService so the required consent fields cannot
+      // drift from the schema again. Looking the college up separately keeps the
+      // OTP response identical for registered and unregistered domains, so the
+      // endpoint cannot be used to enumerate which colleges are on the platform.
+      final normalised = email.trim().toLowerCase();
+      final data = await FirebaseService.sendOtp(normalised);
 
-      final data = Map<String, dynamic>.from(result.data as Map);
-      if (data['success'] == true) {
-        final resData = Map<String, dynamic>.from(data['data'] as Map);
-        state = state.copyWith(
-          step: LoginStep.otpInput,
-          email: email.trim().toLowerCase(),
-          maskedEmail: resData['masked_email'] ?? email,
-          collegeName: resData['college_name'],
-          collegeShortName: resData['college_short_name'],
-          isLoading: false,
-        );
-        _startResendTimer();
+      Map<String, dynamic>? college;
+      try {
+        final lookup = await FirebaseService.checkEmailDomain(normalised);
+        if (lookup['is_registered'] == true && lookup['college'] is Map) {
+          college = Map<String, dynamic>.from(lookup['college'] as Map);
+        }
+      } catch (_) {
+        // Branding is decorative; never block sign-in on it.
       }
+
+      state = state.copyWith(
+        step: LoginStep.otpInput,
+        email: normalised,
+        maskedEmail: data['masked_email'] as String? ?? normalised,
+        collegeName: college?['name'] as String?,
+        collegeShortName: college?['short_name'] as String?,
+        isLoading: false,
+      );
+      _startResendTimer();
     } on FirebaseFunctionsException catch (e) {
       state = state.copyWith(
         isLoading: false,
         error: e.message ?? AppConstants.genericError,
       );
-    } catch (e) {
+    } catch (_) {
       state = state.copyWith(isLoading: false, error: AppConstants.genericError);
     }
   }
@@ -105,13 +111,10 @@ class LoginNotifier extends StateNotifier<LoginState> {
   Future<bool> verifyOtp(String otp) async {
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final result = await FirebaseService.verifyOtp(state.email, otp);
-      if (result['success'] != true) {
-        state = state.copyWith(isLoading: false, error: AppConstants.genericError);
-        return false;
-      }
+      // verifyOtp signs in with the returned custom token and refreshes claims.
+      final data = await FirebaseService.verifyOtp(state.email, otp);
       state = state.copyWith(isLoading: false);
-      return result['data']?['has_profile'] == true;
+      return data['has_profile'] == true;
     } on FirebaseFunctionsException catch (e) {
       state = state.copyWith(isLoading: false, error: e.message ?? AppConstants.genericError);
       return false;

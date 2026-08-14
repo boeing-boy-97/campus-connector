@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import '../../../core/services/firebase_service.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_theme.dart';
@@ -66,37 +67,54 @@ class DiscoveryNotifier extends StateNotifier<AsyncValue<List<StudentCard>>> {
     _load();
   }
 
-  static final _functions = FirebaseFunctions.instanceFor(region: AppConstants.functionsRegion);
-  String? _lastDocId;
+  String? _nextCursor;
   bool _hasMore = true;
+  bool _loading = false;
 
-  Future<void> _load() async {
+  /// Loads a page of recommendations.
+  ///
+  /// Uses the server-provided `next_cursor` rather than assuming the last
+  /// profile's ID is the cursor: the backend filters blocked and already
+  /// connected profiles *after* paging, so the last returned profile is not
+  /// necessarily the last document scanned. The original code paged on
+  /// `profiles.last.id`, which silently skipped candidates.
+  Future<void> _load({bool reset = false}) async {
+    if (_loading) return;
+    _loading = true;
+
     try {
-      final result = await _functions.httpsCallable('getRecommendations').call({
-        'page_size': AppConstants.discoveryPageSize,
-        if (_lastDocId != null) 'last_doc_id': _lastDocId,
-      });
+      final data = await FirebaseService.getRecommendations(
+        pageSize: AppConstants.discoveryPageSize,
+        lastDocId: reset ? null : _nextCursor,
+      );
 
-      final data = Map<String, dynamic>.from(result.data as Map);
-      if (data['success'] == true) {
-        final resData = Map<String, dynamic>.from(data['data'] as Map);
-        final profiles = (resData['profiles'] as List)
-            .map((p) => StudentCard.fromMap(Map<String, dynamic>.from(p as Map)))
-            .toList();
+      final profiles = (data['profiles'] as List? ?? const [])
+          .map((profile) => StudentCard.fromMap(Map<String, dynamic>.from(profile as Map)))
+          .toList();
 
-        _hasMore = resData['has_more'] == true;
-        if (profiles.isNotEmpty) _lastDocId = profiles.last.id;
+      _hasMore = data['has_more'] == true && data['next_cursor'] != null;
+      _nextCursor = data['next_cursor'] as String?;
 
-        final current = state.valueOrNull ?? [];
-        state = AsyncValue.data([...current, ...profiles]);
+      final current = reset ? <StudentCard>[] : (state.valueOrNull ?? <StudentCard>[]);
+      // De-duplicate: overlapping pages are possible with in-memory filtering.
+      final seen = current.map((card) => card.id).toSet();
+      state = AsyncValue.data([
+        ...current,
+        ...profiles.where((card) => seen.add(card.id)),
+      ]);
+    } catch (error, stackTrace) {
+      // Only surface an error when there is nothing to show; a failed
+      // "load more" must not blank out the deck the user is already using.
+      if ((state.valueOrNull ?? const []).isEmpty) {
+        state = AsyncValue.error(error, stackTrace);
       }
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
+    } finally {
+      _loading = false;
     }
   }
 
   void loadMore() {
-    if (!_hasMore) return;
+    if (!_hasMore || _loading) return;
     _load();
   }
 
@@ -110,10 +128,10 @@ class DiscoveryNotifier extends StateNotifier<AsyncValue<List<StudentCard>>> {
   }
 
   Future<void> refresh() async {
-    _lastDocId = null;
+    _nextCursor = null;
     _hasMore = true;
     state = const AsyncValue.loading();
-    await _load();
+    await _load(reset: true);
   }
 }
 
@@ -132,15 +150,30 @@ class DiscoveryScreen extends ConsumerStatefulWidget {
 
 class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   final _swiperController = CardSwiperController();
-  static final _functions = FirebaseFunctions.instanceFor(region: AppConstants.functionsRegion);
 
+  /// Sends a connect request and reports the outcome.
+  ///
+  /// The original version swallowed every error in an empty `catch (_) {}`, so a
+  /// rate limit, a block, or a mutual-intent rejection all looked like success.
   Future<void> _sendRequest(String toId, String matchType) async {
     try {
-      await _functions.httpsCallable('sendConnectRequest').call({
-        'to_id': toId,
-        'match_type': matchType,
-      });
-    } catch (_) {}
+      await FirebaseService.sendConnectRequest(toId: toId, matchType: matchType);
+      if (mounted) _showMessage('Connection request sent.');
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) _showMessage(e.message ?? AppConstants.genericError, isError: true);
+    } catch (_) {
+      if (mounted) _showMessage(AppConstants.genericError, isError: true);
+    }
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: AppConstants.snackBarDuration,
+        backgroundColor: isError ? Colors.red.shade700 : null,
+      ),
+    );
   }
 
   @override

@@ -2,32 +2,56 @@ import { useEffect, useState } from 'react';
 import { onIdTokenChanged, type User } from 'firebase/auth';
 import { auth } from '../services/firebase';
 
-export type AdminRole = 'admin' | 'moderator';
+/**
+ * Roles that may access the admin panel.
+ *
+ * The backend exposes a moderation surface through `requireModerator`
+ * (verification queue, reports, suspensions), so moderators must be able to sign
+ * in. The original guard required `role === 'admin'` and signed moderators out
+ * with "Access denied", making an entire role unusable.
+ */
+export type StaffRole = 'admin' | 'moderator';
 
-interface AuthState {
+export interface AuthState {
   user: User | null;
-  role: AdminRole | null;
+  role: StaffRole | null;
   loading: boolean;
+  /** Set when a signed-in user has no staff role. */
+  unauthorised: boolean;
+}
+
+function readRole(claim: unknown): StaffRole | null {
+  return claim === 'admin' || claim === 'moderator' ? claim : null;
 }
 
 export function useAuthState(): AuthState {
-  const [state, setState] = useState<AuthState>({ user: null, role: null, loading: true });
+  const [state, setState] = useState<AuthState>({
+    user: null,
+    role: null,
+    loading: true,
+    unauthorised: false,
+  });
 
   useEffect(() => {
     let active = true;
+
+    // onIdTokenChanged (rather than onAuthStateChanged) so a role granted while
+    // the session is open is picked up on the next token refresh.
     const unsubscribe = onIdTokenChanged(auth, async (user) => {
       if (!user) {
-        if (active) setState({ user: null, role: null, loading: false });
+        if (active) setState({ user: null, role: null, loading: false, unauthorised: false });
         return;
       }
 
       try {
         const token = await user.getIdTokenResult();
-        const claim = token.claims.role;
-        const role = claim === 'admin' || claim === 'moderator' ? claim : null;
-        if (active) setState({ user, role, loading: false });
+        const role = readRole(token.claims.role);
+        if (active) {
+          setState({ user, role, loading: false, unauthorised: role === null });
+        }
       } catch {
-        if (active) setState({ user: null, role: null, loading: false });
+        // A token that cannot be read is treated as no session at all.
+        if (active) setState({ user: null, role: null, loading: false, unauthorised: false });
       }
     });
 
@@ -38,4 +62,9 @@ export function useAuthState(): AuthState {
   }, []);
 
   return state;
+}
+
+/** True when the role may perform admin-only (not moderator) actions. */
+export function isAdminRole(role: StaffRole | null): boolean {
+  return role === 'admin';
 }
