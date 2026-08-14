@@ -3,23 +3,25 @@
 // ║  Single initialization point — imported by all services and utils       ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as admin from 'firebase-admin';
-import * as functions from 'firebase-functions';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { getMessaging } from 'firebase-admin/messaging';
+import { getStorage } from 'firebase-admin/storage';
+import * as functions from 'firebase-functions/v1';
 
-// Guard: only initialize once
-if (!admin.apps.length) {
-  admin.initializeApp();
+const app = getApps()[0] ?? initializeApp();
+if (getApps().length === 1) {
   functions.logger.info('Firebase Admin SDK initialized');
 }
 
-export const db = admin.firestore();
-export const auth = admin.auth();
-export const storage = admin.storage();
-export const messaging = admin.messaging();
-export const FieldValue = admin.firestore.FieldValue;
-export const Timestamp = admin.firestore.Timestamp;
+export const db = getFirestore(app);
+export const auth = getAuth(app);
+export const storage = getStorage(app);
+export const messaging = getMessaging(app);
+export { FieldValue, Timestamp };
 
 // Firestore settings for better performance
 db.settings({ ignoreUndefinedProperties: true });
 
-export default admin;
+export default app;

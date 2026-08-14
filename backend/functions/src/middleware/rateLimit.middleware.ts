@@ -5,6 +5,7 @@
 import { db, FieldValue } from '../config/firebase';
 import { Errors } from '../utils/errors';
 import { createLogger } from '../utils/logger';
+import { createHash } from 'node:crypto';
 
 const log = createLogger('rateLimit');
 
@@ -28,12 +29,12 @@ export interface RateLimitConfig {
  */
 export async function checkRateLimit(config: RateLimitConfig): Promise<void> {
   const { key, limit, windowSeconds, message } = config;
-  const docRef = db.collection('rate_limits').doc(key);
+  const documentId = createHash('sha256').update(key).digest('hex');
+  const docRef = db.collection('rate_limits').doc(documentId);
   const now = Date.now();
   const windowStart = now - windowSeconds * 1000;
 
-  try {
-    await db.runTransaction(async (tx) => {
+  await db.runTransaction(async (tx) => {
       const snap = await tx.get(docRef);
 
       if (!snap.exists) {
@@ -69,13 +70,7 @@ export async function checkRateLimit(config: RateLimitConfig): Promise<void> {
       }
 
       tx.update(docRef, { count: FieldValue.increment(1) });
-    });
-  } catch (error: any) {
-    // Re-throw HttpsErrors directly
-    if (error?.httpErrorCode) throw error;
-    // Transaction conflicts are transient — don't block the request
-    log.warn(`Rate limit transaction conflict for ${key}:`, error);
-  }
+  });
 }
 
 // ─── Pre-configured rate limits ───────────────────────────────────────────────
@@ -92,11 +87,11 @@ export const RateLimits = {
   }),
 
   /**
-   * OTP verification: max 5 attempts per email per 15 minutes
+   * OTP verification: max 3 attempts per email per 15 minutes
    */
   verifyOtp: (email: string) => checkRateLimit({
     key: `otp:verify:${email}`,
-    limit: 5,
+    limit: 3,
     windowSeconds: 900, // 15 minutes
     message: 'Too many verification attempts. Please request a new OTP.',
   }),

@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { FirebaseError } from 'firebase/app';
 import { auth } from '../services/firebase';
 import { useNavigate } from 'react-router-dom';
 
@@ -10,6 +11,16 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    void user.getIdTokenResult().then((token) => {
+      if (token.claims.role === 'admin') navigate('/dashboard', { replace: true });
+      else void signOut(auth);
+    });
+  }, [navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,23 +35,21 @@ export default function LoginPage() {
         password
       );
 
-      // TEMP ADMIN CHECK
-      const allowedAdmins = [
-        'vedant.test@gmail.com'
-      ];
-
-      const userEmail = credential.user.email || '';
-
-      if (!allowedAdmins.includes(userEmail)) {
+      const token = await credential.user.getIdTokenResult(true);
+      if (token.claims.role !== 'admin') {
         await signOut(auth);
-        setError('Access denied. Admin account required.');
+        setError('Access denied. An administrator claim is required.');
         return;
       }
 
-      navigate('/dashboard');
-    } catch (err: any) {
-      console.error(err);
-      setError('Invalid credentials. Please try again.');
+      navigate('/dashboard', { replace: true });
+    } catch (error: unknown) {
+      console.error(error);
+      if (error instanceof FirebaseError && error.code === 'auth/too-many-requests') {
+        setError('Too many attempts. Please wait before trying again.');
+      } else {
+        setError('Invalid credentials. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

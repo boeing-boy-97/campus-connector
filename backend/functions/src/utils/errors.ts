@@ -3,7 +3,7 @@
 // ║  Wraps Firebase HttpsError with consistent codes and logging            ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions/v1';
 import { ERROR_CODES } from '../../../../shared/constants';
 import { logger } from './logger';
 

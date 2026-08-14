@@ -2,10 +2,11 @@
 // ║  firestore.utils.ts — Typed Firestore helper functions                  ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as admin from 'firebase-admin';
+import type { CollectionReference, DocumentReference, Query } from 'firebase-admin/firestore';
 import { db, FieldValue } from '../config/firebase';
 import { COLLECTIONS } from '../../../../shared/constants';
-import { Student, Match, College } from '../../../../shared/types';
+import { Student, College, StudentPublicProfile } from '../../../../shared/types';
+import { createHash } from 'node:crypto';
 
 /**
  * Typed document fetch — returns null if not found instead of throwing
@@ -24,7 +25,7 @@ export async function getDoc<T>(
  */
 export async function queryDocs<T>(
   collectionName: string,
-  builder: (ref: admin.firestore.CollectionReference) => admin.firestore.Query
+  builder: (ref: CollectionReference) => Query
 ): Promise<(T & { id: string })[]> {
   const q = builder(db.collection(collectionName));
   const snap = await q.get();
@@ -45,15 +46,30 @@ export async function getCollege(collegeId: string): Promise<(College & { id: st
   return getDoc<College>(COLLECTIONS.COLLEGES, collegeId);
 }
 
-/**
- * Checks if two users are blocked (in either direction)
- */
+/** Stable Firestore ID for an unordered pair without delimiter collisions. */
+export function participantPairDocumentId(studentA: string, studentB: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify([studentA, studentB].sort()))
+    .digest('hex');
+}
+
+/** Stable, path-safe identifier for a directional block relationship. */
+export function blockDocumentId(blockerId: string, blockedId: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify([blockerId, blockedId]))
+    .digest('hex');
+}
+
+/** Checks whether either user has blocked the other, including legacy IDs. */
 export async function areUsersBlocked(userA: string, userB: string): Promise<boolean> {
-  const [snapA, snapB] = await Promise.all([
-    db.collection(COLLECTIONS.BLOCKS).doc(`${userA}_${userB}`).get(),
-    db.collection(COLLECTIONS.BLOCKS).doc(`${userB}_${userA}`).get(),
-  ]);
-  return snapA.exists || snapB.exists;
+  const blockCollection = db.collection(COLLECTIONS.BLOCKS);
+  const documentIds = [blockDocumentId(userA, userB), blockDocumentId(userB, userA)];
+  const legacyIds = [`${userA}_${userB}`, `${userB}_${userA}`]
+    .filter((documentId) => !documentId.includes('/'));
+  const documents = await Promise.all(
+    [...documentIds, ...legacyIds].map((documentId) => blockCollection.doc(documentId).get())
+  );
+  return documents.some((document) => document.exists);
 }
 
 /**
@@ -93,7 +109,7 @@ export async function writeAuditLog(entry: {
 export async function safeBatchWrite(
   operations: Array<{
     type: 'set' | 'update' | 'delete';
-    ref: admin.firestore.DocumentReference;
+    ref: DocumentReference;
     data?: Record<string, unknown>;
   }>
 ): Promise<void> {
@@ -120,24 +136,27 @@ export function futureTimestamp(minutesFromNow: number): Date {
 }
 
 /**
- * Strips private/sensitive fields from a student object before sending to clients
+ * Builds a public profile from an explicit allowlist so future private fields
+ * cannot accidentally be exposed to peers.
  */
-export function toPublicStudentProfile(student: Student & { id: string }) {
-  const {
-    college_email,
-    phone,
-    uniform_verification_photo_url,
-    fcm_token,
-    consent_given_at,
-    consent_version,
-    last_seen,
-    otp_hash,
-    otp_expires_at,
-    otp_attempt_count,
-    deleted_at,
-    deletion_reason,
-    ...pub
-  } = student as any;
-
-  return pub;
+export function toPublicStudentProfile(student: Student & { id: string }): StudentPublicProfile {
+  return {
+    id: student.id,
+    college_id: student.college_id,
+    full_name: student.full_name,
+    branch: student.branch,
+    year: student.year,
+    bio: student.bio,
+    gender: student.gender,
+    profile_photos: student.profile_photos,
+    verification_status: student.verification_status,
+    intent_flags: student.intent_flags,
+    interests: student.interests,
+    linkedin_url: student.linkedin_url,
+    github_url: student.github_url,
+    is_active: student.is_active,
+    is_profile_complete: student.is_profile_complete,
+    created_at: student.created_at,
+    updated_at: student.updated_at,
+  };
 }

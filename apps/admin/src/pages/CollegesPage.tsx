@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getColleges, approveCollege } from '../services/adminService';
-import { Building2, CheckCircle, XCircle, Plus } from 'lucide-react';
+import { CheckCircle, XCircle, Plus } from 'lucide-react';
 
 export default function CollegesPage() {
   const queryClient = useQueryClient();

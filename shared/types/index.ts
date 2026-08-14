@@ -55,12 +55,15 @@ export interface Student {
   phone?: string;
   full_name: string;
   branch: string;
-  year: 1 | 2 | 3 | 4;
+  year: 1 | 2 | 3 | 4 | 5 | 6;
   bio: string;
   date_of_birth: FirestoreTimestamp;
   gender: Gender;
   profile_photos: string[];                 // max 6 photo URLs
-  uniform_verification_photo_url?: string;  // PRIVATE — never sent to peers
+  verification_photo_path?: string;         // PRIVATE Storage path — never sent to peers
+  verification_submitted_at?: FirestoreTimestamp;
+  rejection_reason?: string;
+  verified_at?: FirestoreTimestamp;
   verification_status: VerificationStatus;
   intent_flags: IntentFlags;
   interests: string[];
@@ -78,16 +81,26 @@ export interface Student {
   updated_at: FirestoreTimestamp;
 }
 
-// Student profile as visible to peers (no private fields)
-export type StudentPublicProfile = Omit<
+// Explicit allowlist for the profile shape visible to verified peers.
+export type StudentPublicProfile = Pick<
   Student,
-  | 'college_email'
-  | 'phone'
-  | 'uniform_verification_photo_url'
-  | 'fcm_token'
-  | 'consent_given_at'
-  | 'consent_version'
-  | 'last_seen'
+  | 'id'
+  | 'college_id'
+  | 'full_name'
+  | 'branch'
+  | 'year'
+  | 'bio'
+  | 'gender'
+  | 'profile_photos'
+  | 'verification_status'
+  | 'intent_flags'
+  | 'interests'
+  | 'linkedin_url'
+  | 'github_url'
+  | 'is_active'
+  | 'is_profile_complete'
+  | 'created_at'
+  | 'updated_at'
 >;
 
 // ─── Verification Request ─────────────────────────────────────────────────────
@@ -95,8 +108,7 @@ export interface VerificationRequest {
   id: string;
   student_id: string;
   college_id: string;
-  uniform_photo_url: string;   // private Storage URL
-  id_card_photo_url?: string;
+  storage_path: string;        // private Storage path; never expose directly to clients
   review_status: 'pending' | 'approved' | 'rejected';
   review_notes?: string;
   reviewed_by?: string;
@@ -136,7 +148,7 @@ export interface Message {
   match_id: string;
   sender_id: string;
   text?: string;
-  media_url?: string;
+  media_path?: string;
   media_type?: MessageMediaType;
   sent_at: FirestoreTimestamp;
   read_at?: FirestoreTimestamp;
@@ -201,9 +213,13 @@ export interface ApiResponse<T = void> {
 // ─── OTP Store (Firestore, TTL-based) ────────────────────────────────────────
 export interface OtpRecord {
   email: string;
-  otp_hash: string;   // bcrypt hash of OTP
-  attempts: number;
+  otp_hash: string;   // scrypt hash of OTP
+  attempt_count: number;
   expires_at: FirestoreTimestamp;
+  college_id: string;
+  college_name: string;
+  consent_given: boolean;
+  consent_version: string;
   created_at: FirestoreTimestamp;
 }
 

@@ -3,7 +3,7 @@ import { signOut } from 'firebase/auth';
 import { auth } from '../services/firebase';
 import {
   LayoutDashboard, ShieldCheck, Users, Building2,
-  Flag, BarChart3, LogOut, GraduationCap
+  Flag, BarChart3, LogOut
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { getPendingCounts } from '../services/adminService';

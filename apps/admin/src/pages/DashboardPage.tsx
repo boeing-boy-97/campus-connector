@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getDashboardStats } from '../services/adminService';
-import { Users, ShieldCheck, Heart, Flag, Building2, TrendingUp } from 'lucide-react';
+import { ShieldCheck, Flag, Building2, TrendingUp } from 'lucide-react';
 
 export default function DashboardPage() {
   const { data: stats, isLoading } = useQuery({

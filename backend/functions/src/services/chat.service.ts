@@ -6,11 +6,11 @@ import { db, FieldValue } from '../config/firebase';
 import { getStudent } from '../utils/firestore.utils';
 import { Errors } from '../utils/errors';
 import { createLogger } from '../utils/logger';
-import { COLLECTIONS, CHAT_LIMITS, STORAGE_PATHS } from '../../../../shared/constants';
+import { COLLECTIONS, CHAT_LIMITS } from '../../../../shared/constants';
 import { MatchStatus, MessageMediaType } from '../../../../shared/enums';
 import { NotificationService } from './notification.service';
 import { storage } from '../config/firebase';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 
 const log = createLogger('chat.service');
 
@@ -55,12 +55,11 @@ export const ChatService = {
     matchId: string;
     senderId: string;
     text?: string;
-    mediaUrl?: string;
-    mediaType?: MessageMediaType;
+    mediaPath?: string;
   }): Promise<string> {
-    const { matchId, senderId, text, mediaUrl, mediaType } = params;
+    const { matchId, senderId, text, mediaPath } = params;
 
-    if (!text && !mediaUrl) {
+    if (!text && !mediaPath) {
       throw Errors.invalidArgument('Message must have either text or media.');
     }
 
@@ -68,7 +67,34 @@ export const ChatService = {
       throw Errors.invalidArgument(`Message exceeds maximum length of ${CHAT_LIMITS.MAX_MESSAGE_LENGTH} characters.`);
     }
 
-    const { match, recipientId } = await ChatService.validateMatchParticipant(matchId, senderId);
+    const { recipientId } = await ChatService.validateMatchParticipant(matchId, senderId);
+    let mediaType: MessageMediaType | undefined;
+
+    if (mediaPath) {
+      const expectedPrefix = `chat_media/${matchId}/`;
+      if (!mediaPath.startsWith(expectedPrefix) || mediaPath.slice(expectedPrefix.length).includes('/')) {
+        throw Errors.invalidArgument('Invalid chat media path.');
+      }
+
+      let metadata;
+      try {
+        [metadata] = await storage.bucket().file(mediaPath).getMetadata();
+      } catch {
+        throw Errors.invalidArgument('The uploaded media file does not exist.');
+      }
+      mediaType = ALLOWED_CONTENT_TYPES.get(metadata.contentType ?? '');
+      const uploadedSize = Number(metadata.size ?? 0);
+      const customMetadata = metadata.metadata ?? {};
+      if (
+        customMetadata.uploader_id !== senderId
+        || customMetadata.match_id !== matchId
+      ) {
+        throw Errors.forbidden('This media upload does not belong to the sender.');
+      }
+      if (!mediaType || uploadedSize <= 0 || uploadedSize > MAX_MEDIA_SIZE_BYTES) {
+        throw Errors.invalidArgument('The uploaded media file is not supported.');
+      }
+    }
 
     // Build preview for match document
     let preview: string;
@@ -87,7 +113,7 @@ export const ChatService = {
       match_id: matchId,
       sender_id: senderId,
       text: text || null,
-      media_url: mediaUrl || null,
+      media_path: mediaPath || null,
       media_type: mediaType || null,
       sent_at: FieldValue.serverTimestamp(),
       read_at: null,
@@ -108,7 +134,9 @@ export const ChatService = {
       toId: recipientId,
       senderName: sender?.full_name || 'Someone',
       matchId,
-      preview: text ? (text.length > 80 ? text.substring(0, 77) + '…' : text) : '📷 Sent a photo',
+      preview: text
+        ? (text.length > 80 ? text.substring(0, 77) + '…' : text)
+        : mediaType === MessageMediaType.IMAGE ? '📷 Sent a photo' : '🎥 Sent a video',
     });
 
     log.debug(`Message ${msgRef.id} sent in match ${matchId}`);
@@ -165,9 +193,15 @@ export const ChatService = {
     await db.collection(COLLECTIONS.MESSAGES).doc(messageId).update({
       is_deleted: true,
       text: null,
-      media_url: null,
+      media_path: null,
+      media_type: null,
       deleted_at: FieldValue.serverTimestamp(),
     });
+
+    const mediaPath = typeof msg.media_path === 'string' ? msg.media_path : null;
+    if (mediaPath?.startsWith(`chat_media/${msg.match_id}/`)) {
+      await storage.bucket().file(mediaPath).delete({ ignoreNotFound: true });
+    }
   },
 
   /**
@@ -178,7 +212,11 @@ export const ChatService = {
     userId: string;
     contentType: string;
     fileSize: number;
-  }): Promise<{ upload_url: string; file_path: string }> {
+  }): Promise<{
+    upload_url: string;
+    file_path: string;
+    upload_headers: Record<string, string>;
+  }> {
     const { matchId, userId, contentType, fileSize } = params;
 
     if (!ALLOWED_CONTENT_TYPES.has(contentType)) {
@@ -192,16 +230,25 @@ export const ChatService = {
     await ChatService.validateMatchParticipant(matchId, userId);
 
     const ext = contentType.split('/')[1];
-    const fileName = `${uuidv4()}.${ext}`;
+    const fileName = `${randomUUID()}.${ext}`;
     const filePath = `chat_media/${matchId}/${fileName}`;
 
     const file = storage.bucket().file(filePath);
+    const uploadHeaders = {
+      'content-type': contentType,
+      'x-goog-meta-uploader_id': userId,
+      'x-goog-meta-match_id': matchId,
+    };
     const [uploadUrl] = await file.getSignedUrl({
       action: 'write',
       expires: Date.now() + 15 * 60 * 1000, // 15 minutes
       contentType,
+      extensionHeaders: {
+        'x-goog-meta-uploader_id': userId,
+        'x-goog-meta-match_id': matchId,
+      },
     });
 
-    return { upload_url: uploadUrl, file_path: filePath };
+    return { upload_url: uploadUrl, file_path: filePath, upload_headers: uploadHeaders };
   },
 };

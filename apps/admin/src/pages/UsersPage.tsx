@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getUsers } from '../services/adminService';
 import { useState } from 'react';
-import { Users } from 'lucide-react';
 
 export default function UsersPage() {
   const [filter, setFilter] = useState('');
