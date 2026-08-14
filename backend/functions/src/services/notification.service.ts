@@ -66,8 +66,28 @@ export const NotificationService = {
     });
   },
 
-  async connectRequestDeclined(_params: { toId: string; requestId: string }) {
-    // Silent — no notification on decline (better UX, avoids embarrassment)
-    // Only create in-app record if explicitly needed
+  async accountSuspended(params: { userId: string; reason: string }) {
+    await notify({
+      userId: params.userId,
+      type: NotificationType.ACCOUNT_SUSPENDED,
+      title: 'Account suspended',
+      body: `Your account has been suspended after a safety review. Reason: ${params.reason}`,
+      data: { type: NotificationType.ACCOUNT_SUSPENDED },
+    });
+  },
+
+  async accountReinstated(params: { userId: string }) {
+    await notify({
+      userId: params.userId,
+      type: NotificationType.ACCOUNT_REINSTATED,
+      title: 'Account reinstated',
+      body: 'Your account has been reinstated. Welcome back to your campus community.',
+      data: { type: NotificationType.ACCOUNT_REINSTATED },
+    });
   },
 };
+
+// Declining a connect request is intentionally silent: notifying the sender adds
+// no value and discourages people from declining. The request document itself
+// records the outcome, and the sender simply stops seeing it as pending.
+

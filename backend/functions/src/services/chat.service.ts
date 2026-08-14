@@ -157,26 +157,32 @@ export const ChatService = {
       .where('is_deleted', '==', false)
       .get();
 
-    if (unreadSnap.empty) return 0;
+    const matchRef = db.collection(COLLECTIONS.MATCHES).doc(matchId);
+
+    if (unreadSnap.empty) {
+      // Still clear the counter — it can drift if a message was deleted after
+      // incrementing it, and a stale badge is a visible bug.
+      await matchRef.update({ [`unread_count_${userId}`]: 0 });
+      return 0;
+    }
 
     const readAt = FieldValue.serverTimestamp();
     const BATCH_SIZE = 499;
-    const batches: Promise<FirebaseFirestore.WriteResult[]>[] = [];
 
     for (let i = 0; i < unreadSnap.docs.length; i += BATCH_SIZE) {
       const batch = db.batch();
-      unreadSnap.docs.slice(i, i + BATCH_SIZE).forEach((d) => batch.update(d.ref, { read_at: readAt }));
-      batches.push(batch.commit());
+      unreadSnap.docs
+        .slice(i, i + BATCH_SIZE)
+        .forEach((document) => batch.update(document.ref, { read_at: readAt }));
+
+      // Reset the recipient's unread counter alongside the final chunk so the
+      // badge never clears while messages remain unmarked.
+      if (i + BATCH_SIZE >= unreadSnap.docs.length) {
+        batch.update(matchRef, { [`unread_count_${userId}`]: 0 });
+      }
+      await batch.commit();
     }
 
-    // Reset unread count on match
-    const matchUpdateBatch = db.batch();
-    matchUpdateBatch.update(db.collection(COLLECTIONS.MATCHES).doc(matchId), {
-      [`unread_count_${userId}`]: 0,
-    });
-    batches.push(matchUpdateBatch.commit());
-
-    await Promise.all(batches);
     return unreadSnap.size;
   },
 

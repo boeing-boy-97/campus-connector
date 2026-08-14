@@ -53,6 +53,32 @@ export function participantPairDocumentId(studentA: string, studentB: string): s
     .digest('hex');
 }
 
+/**
+ * All match documents involving a participant, optionally filtered by status.
+ *
+ * New matches carry `participant_ids`, so a single `array-contains` query
+ * suffices. Matches written before that field existed are still found through
+ * the two legacy single-field queries, and results are de-duplicated by ID.
+ */
+export async function getMatchDocsForParticipant(
+  uid: string,
+  status?: string
+): Promise<FirebaseFirestore.QueryDocumentSnapshot[]> {
+  const matches = db.collection(COLLECTIONS.MATCHES);
+  const withStatus = (query: Query) => (status ? query.where('status', '==', status) : query);
+
+  const [current, legacyA, legacyB] = await Promise.all([
+    withStatus(matches.where('participant_ids', 'array-contains', uid)).get(),
+    withStatus(matches.where('student_a_id', '==', uid)).get(),
+    withStatus(matches.where('student_b_id', '==', uid)).get(),
+  ]);
+
+  const unique = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  [...current.docs, ...legacyA.docs, ...legacyB.docs]
+    .forEach((document) => unique.set(document.id, document));
+  return [...unique.values()];
+}
+
 /** Stable, path-safe identifier for a directional block relationship. */
 export function blockDocumentId(blockerId: string, blockedId: string): string {
   return createHash('sha256')

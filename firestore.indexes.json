@@ -1,2 +1,0 @@
-// Root alias for firestore.indexes.json (firebase.json references this path)
-// The actual indexes are defined in: firestore/indexes/firestore.indexes.json

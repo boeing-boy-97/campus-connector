@@ -1,7 +1,7 @@
 {
   "name": "campus-connect",
   "version": "1.0.0",
-  "description": "Campus Connect — college-verified student social and networking app",
+  "description": "Campus Connect \u2014 college-verified student social and networking app",
   "private": true,
   "workspaces": [
     "apps/admin",
@@ -26,7 +26,11 @@
     "test:functions": "npm test --workspace campus-connect-functions",
     "test:rules": "firebase emulators:exec --only firestore,storage 'npm run test:rules --workspace campus-connect-functions'",
     "lint": "npm run lint --workspaces --if-present",
-    "check": "npm run lint && npm run build"
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "test:student": "npm test --workspace campus-connect-student",
+    "test": "npm run test:functions && npm run test:student",
+    "typecheck": "npm run typecheck --workspace campus-connect-functions && npm run typecheck --workspace campus-connect-student",
+    "seed": "node --experimental-strip-types scripts/seed-data/seed.ts"
   },
   "devDependencies": {
     "firebase-tools": "^13.0.0",
@@ -43,5 +47,9 @@
     "firebase"
   ],
   "author": "Campus Connect Team",
-  "license": "MIT"
+  "license": "MIT",
+  "overrides": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  }
 }

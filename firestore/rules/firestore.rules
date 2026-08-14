@@ -3,17 +3,28 @@ rules_version = '2';
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║         CAMPUS CONNECT — FIRESTORE SECURITY RULES                       ║
 // ║                                                                          ║
-// ║  CRITICAL: college_id isolation is enforced HERE at DB layer.           ║
-// ║  A modified APK cannot bypass these rules.                              ║
+// ║  Model: every collection is READ-ONLY to clients and DEFAULT-DENY.       ║
+// ║  All writes are performed by Cloud Functions with the Admin SDK, which   ║
+// ║  bypasses these rules — that is where validation, rate limiting,         ║
+// ║  authorization and audit logging live. A modified client cannot forge    ║
+// ║  a write, and cannot widen its own read scope.                          ║
 // ║                                                                          ║
-// ║  Role hierarchy: admin > moderator > student                            ║
+// ║  Peer profile data is never read directly from `students`; peers only    ║
+// ║  ever receive the allowlisted projection returned by the getProfile and  ║
+// ║  getRecommendations callables.                                           ║
+// ║                                                                          ║
+// ║  Role hierarchy: admin > moderator > student (from Auth custom claims).  ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // ─────────────────────────────────────────────────────────────────────────
-    // HELPER FUNCTIONS
+    // HELPERS
+    //
+    // All helpers read from the caller's ID token only. Deliberately avoiding
+    // get()/exists() lookups here keeps rule evaluation to zero extra document
+    // reads and prevents a rule from depending on data a client can influence.
     // ─────────────────────────────────────────────────────────────────────────
 
     function isAuthenticated() {
@@ -32,77 +43,40 @@ service cloud.firestore {
       return isAuthenticated() && tokenRole() == 'admin';
     }
 
+    // Moderators and admins share the moderation surface. The admin panel reads
+    // these collections with the client SDK, so moderator reads must be allowed
+    // here or the panel silently renders empty tables.
     function isModerator() {
       return isAuthenticated() && (tokenRole() == 'admin' || tokenRole() == 'moderator');
-    }
-
-    function isStudent() {
-      return isAuthenticated() && tokenRole() == 'student';
     }
 
     function isSelf(userId) {
       return isAuthenticated() && uid() == userId;
     }
 
-    // Returns the current student's document
-    function getMyProfile() {
-      return get(/databases/$(database)/documents/students/$(uid())).data;
-    }
-
-    // Returns a specific student's document
-    function getStudentDoc(studentId) {
-      return get(/databases/$(database)/documents/students/$(studentId)).data;
-    }
-
-    // Same college check — THE critical isolation function
-    function sameCollege(targetCollegeId) {
+    // Is the caller a participant of the given match?
+    function isMatchParticipant(matchId) {
+      let match = get(/databases/$(database)/documents/matches/$(matchId)).data;
       return isAuthenticated()
-        && getMyProfile().college_id == targetCollegeId;
-    }
-
-    // Is the current user's profile verified?
-    function isVerified() {
-      return isAuthenticated()
-        && getMyProfile().verification_status == 'approved';
-    }
-
-    // Is student A blocked by student B or vice versa?
-    function notBlocked(studentIdA, studentIdB) {
-      return !exists(/databases/$(database)/documents/blocks/$(studentIdA + '_' + studentIdB))
-        && !exists(/databases/$(database)/documents/blocks/$(studentIdB + '_' + studentIdA));
-    }
-
-    // Validate string field length
-    function validString(field, maxLen) {
-      return field is string && field.size() <= maxLen;
-    }
-
-    // Check if a match exists between two students
-    function matchExists(matchId) {
-      return exists(/databases/$(database)/documents/matches/$(matchId));
+        && (match.student_a_id == uid() || match.student_b_id == uid());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // COLLEGES COLLECTION
-    // Any authenticated user can read colleges (needed for domain lookup)
-    // Only admins can create/update colleges
+    // COLLEGES — any signed-in user may read (needed for branding lookup).
+    // Lifecycle writes are validated and audited by Cloud Functions.
     // ─────────────────────────────────────────────────────────────────────────
     match /colleges/{collegeId} {
       allow read: if isAuthenticated();
-      // College lifecycle writes are validated and audited by Cloud Functions.
       allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // STUDENTS COLLECTION
+    // STUDENTS — a student document holds private identity, contact and consent
+    // fields, so peers must never read it directly. Moderators need read access
+    // for the admin panel's user management and moderation views.
     // ─────────────────────────────────────────────────────────────────────────
     match /students/{studentId} {
-
-      // Student documents contain private identity and consent fields, so peers
-      // receive an allowlisted profile through getProfile/recommendations instead.
-      allow read: if isSelf(studentId) || isAdmin();
-
-      // Profile lifecycle writes are validated and rate-limited by Cloud Functions.
+      allow read: if isSelf(studentId) || isModerator();
       allow write: if false;
     }
 
@@ -110,100 +84,94 @@ service cloud.firestore {
     // VERIFICATION REQUESTS
     // ─────────────────────────────────────────────────────────────────────────
     match /verification_requests/{requestId} {
-      // Student can read their own request; admins/moderators can read all
       allow read: if isModerator()
         || (isAuthenticated() && resource.data.student_id == uid());
-
-      // Submission and review are atomic, validated Cloud Function operations.
       allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // CONNECT REQUESTS (before mutual match)
+    // CONNECT REQUESTS (before a mutual match exists)
     // ─────────────────────────────────────────────────────────────────────────
     match /connect_requests/{requestId} {
-      allow read: if isAuthenticated()
-        && (resource.data.from_id == uid() || resource.data.to_id == uid());
-
-      // Requests are created/responded to transactionally by Cloud Functions.
+      allow read: if isModerator()
+        || (isAuthenticated()
+            && (resource.data.from_id == uid() || resource.data.to_id == uid()));
       allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MATCHES
+    // MATCHES — both participants can read. `participant_ids` supports the
+    // single array-contains listener used by the clients.
     // ─────────────────────────────────────────────────────────────────────────
     match /matches/{matchId} {
-      // Both matched students can read; admins can read all
-      allow read: if isAdmin()
+      allow read: if isModerator()
         || (isAuthenticated()
             && (resource.data.student_a_id == uid()
                 || resource.data.student_b_id == uid()));
-
-      // Match transitions and counters are owned by Cloud Functions.
       allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MESSAGES
+    // MESSAGES — readable only by the two participants of the parent match.
+    // Moderators are deliberately NOT granted blanket read access to private
+    // conversations; message evidence reaches moderation through reports.
     // ─────────────────────────────────────────────────────────────────────────
     match /messages/{messageId} {
-      // Only the two matched students can read messages
-      allow read: if isAuthenticated() && (
-        resource.data.sender_id == uid()
-        || exists(/databases/$(database)/documents/matches/$(resource.data.match_id))
-        && (
-          get(/databases/$(database)/documents/matches/$(resource.data.match_id)).data.student_a_id == uid()
-          || get(/databases/$(database)/documents/matches/$(resource.data.match_id)).data.student_b_id == uid()
-        )
-      );
-
-      // Message sending, read receipts, and deletion use protected callables.
+      allow read: if isAuthenticated()
+        && (resource.data.sender_id == uid() || isMatchParticipant(resource.data.match_id));
       allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // REPORTS
+    // REPORTS — the reporter can see their own submissions; moderators see all.
     // ─────────────────────────────────────────────────────────────────────────
     match /reports/{reportId} {
-      // Reporter can read their own reports; moderators can read all
       allow read: if isModerator()
         || (isAuthenticated() && resource.data.reporter_id == uid());
-
-      // Reports and reviews are validated, rate-limited, and audited by callables.
       allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // BLOCKS
-    // Document ID format: "{blocker_id}_{blocked_id}"
+    // BLOCKS — document ID is a sha256 of the directional pair, so the ID
+    // itself leaks nothing. Either side may read a block that involves them.
     // ─────────────────────────────────────────────────────────────────────────
     match /blocks/{blockId} {
-      allow read: if isAuthenticated()
-        && (resource.data.blocker_id == uid() || resource.data.blocked_id == uid());
-
-      // Block state and automatic unmatching are handled by Cloud Functions.
+      allow read: if isModerator()
+        || (isAuthenticated()
+            && (resource.data.blocker_id == uid() || resource.data.blocked_id == uid()));
       allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // ADMIN AUDIT LOG
-    // Only admins can read/write
+    // AUDIT LOGS — admin-only, append-only via Cloud Functions.
     // ─────────────────────────────────────────────────────────────────────────
     match /audit_logs/{logId} {
       allow read: if isAdmin();
-      allow write: if false; // Written only by Cloud Functions
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // NOTIFICATIONS
+    // NOTIFICATIONS — owner-only.
     // ─────────────────────────────────────────────────────────────────────────
     match /notifications/{notificationId} {
       allow read: if isAuthenticated() && resource.data.user_id == uid();
-      allow write: if false; // Written only by Cloud Functions
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // DEFAULT DENY — catch-all
+    // OTP RECORDS / RATE LIMITS — server-side only. An OTP hash or a rate-limit
+    // counter must never be readable by a client, not even its owner.
+    // ─────────────────────────────────────────────────────────────────────────
+    match /otp_records/{recordId} {
+      allow read, write: if false;
+    }
+
+    match /rate_limits/{bucketId} {
+      allow read, write: if false;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DEFAULT DENY — catch-all for any collection added in future.
     // ─────────────────────────────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

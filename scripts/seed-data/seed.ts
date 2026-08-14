@@ -1,18 +1,35 @@
 /**
- * Campus Connect — Seed Data Script
- * Seeds Firestore with sample colleges and test data for development
+ * Campus Connect — development seed data.
  *
- * Usage: npx ts-node seed.ts
- * Requires: GOOGLE_APPLICATION_CREDENTIALS env var or Firebase emulator running
+ * Usage:  npm run seed          (with the emulator suite running)
+ *
+ * SAFETY: this script refuses to run unless the Firestore emulator host is set.
+ * It writes verified student profiles and approved colleges directly, bypassing
+ * every validation path, so running it against a real project would inject
+ * unverifiable accounts into production data.
  */
 
 import * as admin from 'firebase-admin';
 
-// Run against emulator by default
-process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'localhost:8080';
-process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
+// Default to the local emulator rather than a real project.
+process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
 
-admin.initializeApp({ projectId: 'campus-connect-dev' });
+const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
+const isLocalEmulator = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\]):\d+$/.test(emulatorHost);
+
+if (!isLocalEmulator) {
+  console.error(
+    '❌ Refusing to seed: FIRESTORE_EMULATOR_HOST is not a local emulator ' +
+    `(got "${emulatorHost}").\n` +
+    '   This script writes pre-verified accounts and would corrupt real data.\n' +
+    '   Start the emulators first:  npm run emulator'
+  );
+  process.exit(1);
+}
+
+const projectId = process.env.GCLOUD_PROJECT || 'campus-connect-dev';
+admin.initializeApp({ projectId });
 const db = admin.firestore();
 
 // ── Seed Data ─────────────────────────────────────────────────────────────────
@@ -130,7 +147,7 @@ async function seedStudents(collegeIds: Record<string, string>) {
   ];
 
   for (const student of testStudents) {
-    const uid = `test_${student.full_name.toLowerCase().replace(' ', '_')}`;
+    const uid = `test_${student.full_name.toLowerCase().replace(/\s+/g, '_')}`;
     await db.collection('students').doc(uid).set({
       ...student,
       id: uid,
@@ -147,13 +164,13 @@ async function seedStudents(collegeIds: Record<string, string>) {
 async function main() {
   console.log('🌱 Campus Connect Seed Script');
   console.log('================================');
-  console.log(`📡 Firestore: ${process.env.FIRESTORE_EMULATOR_HOST}`);
+  console.log(`📡 Firestore emulator: ${emulatorHost} (project: ${projectId})`);
 
   try {
     const collegeIds = await seedColleges();
     await seedStudents(collegeIds);
     console.log('\n✅ Seeding complete!');
-    console.log('Open Firebase Emulator UI at http://localhost:4000');
+    console.log('Open the Firebase Emulator UI at http://127.0.0.1:4000');
     process.exit(0);
   } catch (err) {
     console.error('❌ Seed error:', err);

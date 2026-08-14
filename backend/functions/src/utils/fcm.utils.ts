@@ -109,7 +109,11 @@ export async function createInAppNotification(params: {
 }
 
 /**
- * Sends both a push notification AND creates an in-app notification
+ * Sends a device push AND persists an in-app notification.
+ *
+ * The in-app record is the source of truth: a missing or stale FCM token must
+ * never prevent the user from seeing the notification when they next open the
+ * app, so push failure is reported rather than thrown.
  */
 export async function notify(params: {
   userId: string;
@@ -117,13 +121,18 @@ export async function notify(params: {
   title: string;
   body: string;
   data?: Record<string, string>;
-}): Promise<void> {
-  await Promise.all([
+}): Promise<{ notificationId: string; pushDelivered: boolean }> {
+  const [pushDelivered, notificationId] = await Promise.all([
     sendPushToUser(params.userId, {
       title: params.title,
       body: params.body,
       data: params.data,
+    }).catch((error) => {
+      log.error(`Push dispatch threw for user ${params.userId}`, error);
+      return false;
     }),
     createInAppNotification(params),
   ]);
+
+  return { notificationId, pushDelivered };
 }

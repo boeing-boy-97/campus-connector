@@ -1,192 +1,133 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
+import { AlertTriangle, ShieldCheck } from 'lucide-react';
 import { auth } from '../services/firebase';
-import { useNavigate } from 'react-router-dom';
+
+/** Maps Firebase auth error codes to messages that do not leak account existence. */
+function authErrorMessage(error: unknown): string {
+  if (error instanceof FirebaseError) {
+    switch (error.code) {
+      case 'auth/too-many-requests':
+        return 'Too many attempts. Please wait a few minutes before trying again.';
+      case 'auth/network-request-failed':
+        return 'Could not reach the authentication service. Check your connection.';
+      case 'auth/user-disabled':
+        return 'This account has been disabled.';
+      case 'auth/invalid-email':
+        return 'Enter a valid e-mail address.';
+      default:
+        // Deliberately generic: distinguishing "wrong password" from "no such
+        // user" would let an attacker enumerate staff accounts.
+        return 'Invalid e-mail or password.';
+    }
+  }
+  return 'Sign-in failed. Please try again.';
+}
+
+const STAFF_ROLES = ['admin', 'moderator'];
 
 export default function LoginPage() {
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const navigate = useNavigate();
-
+  // If a staff session already exists, skip the form.
   useEffect(() => {
     const user = auth.currentUser;
     if (!user) return;
 
-    void user.getIdTokenResult().then((token) => {
-      if (token.claims.role === 'admin') navigate('/dashboard', { replace: true });
-      else void signOut(auth);
-    });
+    let active = true;
+    void user.getIdTokenResult()
+      .then((token) => {
+        if (!active) return;
+        if (STAFF_ROLES.includes(String(token.claims.role))) {
+          navigate('/dashboard', { replace: true });
+        }
+      })
+      .catch(() => undefined);
+
+    return () => { active = false; };
   }, [navigate]);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-
+  const handleLogin = async (event: FormEvent) => {
+    event.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      const credential = await signInWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
 
+      // Force-refresh so a freshly granted role is visible immediately.
       const token = await credential.user.getIdTokenResult(true);
-      if (token.claims.role !== 'admin') {
+      const role = String(token.claims.role ?? '');
+
+      if (!STAFF_ROLES.includes(role)) {
         await signOut(auth);
-        setError('Access denied. An administrator claim is required.');
+        setError(
+          'This account does not have administrator or moderator access. '
+          + 'Ask an administrator to grant a staff role.',
+        );
         return;
       }
 
       navigate('/dashboard', { replace: true });
-    } catch (error: unknown) {
-      console.error(error);
-      if (error instanceof FirebaseError && error.code === 'auth/too-many-requests') {
-        setError('Too many attempts. Please wait before trying again.');
-      } else {
-        setError('Invalid credentials. Please try again.');
-      }
+    } catch (caught) {
+      setError(authErrorMessage(caught));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'var(--bg)',
-        backgroundImage:
-          'radial-gradient(ellipse at 30% 20%, rgba(108,99,255,0.12) 0%, transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(233,30,99,0.08) 0%, transparent 60%)',
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: 420,
-          padding: '0 20px',
-        }}
-      >
-        <div
-          style={{
-            textAlign: 'center',
-            marginBottom: 40,
-          }}
-        >
-          <div
-            style={{
-              width: 70,
-              height: 70,
-              borderRadius: 18,
-              background:
-                'linear-gradient(135deg, #6C63FF, #E91E63)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 30,
-              margin: '0 auto 16px',
-            }}
-          >
-            🎓
-          </div>
-
-          <h1
-            style={{
-              fontSize: 36,
-              fontWeight: 800,
-              marginBottom: 8,
-            }}
-          >
-            Campus Connect
-          </h1>
-
-          <p
-            style={{
-              color: 'var(--text-secondary)',
-              fontSize: 16,
-            }}
-          >
-            Admin Dashboard
-          </p>
+    <div className="login-page">
+      <div className="login-shell">
+        <div className="login-brand">
+          <div className="login-logo" aria-hidden="true">CC</div>
+          <h1>Campus Connect</h1>
+          <p className="text-muted">Administration &amp; moderation</p>
         </div>
 
-        <div
-          className="card"
-          style={{
-            padding: 32,
-          }}
-        >
-          <h2
-            style={{
-              fontSize: 28,
-              marginBottom: 24,
-            }}
-          >
-            Sign In
-          </h2>
+        <div className="card login-card">
+          <h2 style={{ marginBottom: 20 }}>Sign in</h2>
 
           {error && (
-            <div
-              style={{
-                background: 'rgba(239,68,68,0.12)',
-                border: '1px solid rgba(239,68,68,0.3)',
-                color: '#EF4444',
-                padding: '12px 16px',
-                borderRadius: 8,
-                fontSize: 14,
-                marginBottom: 16,
-              }}
-            >
-              ⚠️ {error}
+            <div className="alert alert-danger" role="alert">
+              <AlertTriangle size={16} aria-hidden="true" />
+              <span>{error}</span>
             </div>
           )}
 
-          <form onSubmit={handleLogin}>
+          <form onSubmit={handleLogin} noValidate>
             <div className="form-group">
-              <label
-                className="form-label"
-                htmlFor="email"
-              >
-                Email Address
-              </label>
-
+              <label className="form-label" htmlFor="email">E-mail address</label>
               <input
                 id="email"
                 className="form-input"
                 type="email"
-                placeholder="admin@campusconnect.app"
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="you@campusconnect.app"
                 value={email}
-                onChange={(e) =>
-                  setEmail(e.target.value)
-                }
+                onChange={(event) => setEmail(event.target.value)}
                 required
               />
             </div>
 
             <div className="form-group">
-              <label
-                className="form-label"
-                htmlFor="password"
-              >
-                Password
-              </label>
-
+              <label className="form-label" htmlFor="password">Password</label>
               <input
                 id="password"
                 className="form-input"
                 type="password"
+                autoComplete="current-password"
                 placeholder="••••••••"
                 value={password}
-                onChange={(e) =>
-                  setPassword(e.target.value)
-                }
+                onChange={(event) => setPassword(event.target.value)}
                 required
               />
             </div>
@@ -194,27 +135,17 @@ export default function LoginPage() {
             <button
               type="submit"
               className="btn btn-primary"
-              style={{
-                width: '100%',
-                marginTop: 8,
-                justifyContent: 'center',
-              }}
-              disabled={loading}
+              style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
+              disabled={loading || !email.trim() || !password}
             >
-              {loading ? 'Signing In...' : 'Sign In'}
+              {loading ? <><span className="spinner" /> Signing in…</> : 'Sign in'}
             </button>
           </form>
         </div>
 
-        <p
-          style={{
-            color: 'var(--text-muted)',
-            fontSize: 12,
-            textAlign: 'center',
-            marginTop: 20,
-          }}
-        >
-          Restricted access. Admin accounts only.
+        <p className="login-note">
+          <ShieldCheck size={14} aria-hidden="true" />
+          Restricted access. All actions in this panel are recorded in the audit log.
         </p>
       </div>
     </div>

@@ -1,6 +1,6 @@
 {
   "name": "campus-connect-functions",
-  "description": "Campus Connect — Firebase Cloud Functions (TypeScript)",
+  "description": "Campus Connect \u2014 Firebase Cloud Functions (TypeScript)",
   "version": "1.0.0",
   "private": true,
   "engines": {
@@ -17,7 +17,8 @@
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
     "lint": "eslint --ext .ts src/",
-    "test": "jest --coverage"
+    "test": "jest --coverage",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "firebase-admin": "^14.2.0",
