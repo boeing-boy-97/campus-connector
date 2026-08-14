@@ -2,7 +2,7 @@
 // ║  updateProfile.ts — Update student profile fields                       ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions/v1';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth.middleware';
 import { validate } from '../../middleware/validate.middleware';

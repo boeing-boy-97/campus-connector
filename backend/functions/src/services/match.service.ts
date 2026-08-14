@@ -7,6 +7,8 @@ import {
   getStudent,
   getBlockedUserIds,
   areUsersBlocked,
+  blockDocumentId,
+  participantPairDocumentId,
   toPublicStudentProfile,
 } from '../utils/firestore.utils';
 import { Errors } from '../utils/errors';
@@ -18,7 +20,7 @@ import {
   MatchStatus,
   MatchType,
 } from '../../../../shared/enums';
-import { StudentPublicProfile } from '../../../../shared/types';
+import { Student, StudentPublicProfile } from '../../../../shared/types';
 import { NotificationService } from './notification.service';
 
 const log = createLogger('match.service');
@@ -41,11 +43,34 @@ export const MatchService = {
     uid: string,
     collegeId: string,
     filters: RecommendationsFilter
-  ): Promise<{ profiles: StudentPublicProfile[]; has_more: boolean }> {
+  ): Promise<{ profiles: StudentPublicProfile[]; has_more: boolean; next_cursor: string | null }> {
     const { gender_filter, year_filter, page_size = PAGINATION.DISCOVERY_PAGE_SIZE, last_doc_id } = filters;
 
-    // Get all blocked user IDs to exclude
-    const blockedIds = await getBlockedUserIds(uid);
+    // Exclude blocks, pending requests, and active matches in both directions.
+    const [blockedIds, sentRequests, receivedRequests, matchesAsA, matchesAsB] = await Promise.all([
+      getBlockedUserIds(uid),
+      db.collection(COLLECTIONS.CONNECT_REQUESTS)
+        .where('from_id', '==', uid)
+        .where('status', '==', ConnectRequestStatus.PENDING)
+        .get(),
+      db.collection(COLLECTIONS.CONNECT_REQUESTS)
+        .where('to_id', '==', uid)
+        .where('status', '==', ConnectRequestStatus.PENDING)
+        .get(),
+      db.collection(COLLECTIONS.MATCHES)
+        .where('student_a_id', '==', uid)
+        .where('status', '==', MatchStatus.ACTIVE)
+        .get(),
+      db.collection(COLLECTIONS.MATCHES)
+        .where('student_b_id', '==', uid)
+        .where('status', '==', MatchStatus.ACTIVE)
+        .get(),
+    ]);
+    const excludedIds = new Set(blockedIds);
+    sentRequests.docs.forEach((document) => excludedIds.add(document.data().to_id));
+    receivedRequests.docs.forEach((document) => excludedIds.add(document.data().from_id));
+    matchesAsA.docs.forEach((document) => excludedIds.add(document.data().student_b_id));
+    matchesAsB.docs.forEach((document) => excludedIds.add(document.data().student_a_id));
 
     let query: FirebaseFirestore.Query = db.collection(COLLECTIONS.STUDENTS)
       .where('college_id', '==', collegeId)
@@ -62,20 +87,29 @@ export const MatchService = {
       if (lastSnap.exists) query = query.startAfter(lastSnap);
     }
 
-    query = query.limit(page_size + 1);
-    const snap = await query.get();
+    // Scan beyond one page because blocked/connected profiles are filtered in memory.
+    const scanLimit = Math.min(page_size * 3 + 1, 151);
+    const snap = await query.limit(scanLimit).get();
+    const candidates = snap.docs.filter((document) => {
+      if (excludedIds.has(document.id)) return false;
+      if (!filters.match_type) return true;
+      return document.data().intent_flags?.[filters.match_type] === true;
+    });
+    const pageDocuments = candidates.slice(0, page_size);
+    const profiles = pageDocuments.map((document) => toPublicStudentProfile({
+      ...(document.data() as Student),
+      id: document.id,
+    }));
+    const hasMore = candidates.length > page_size || snap.docs.length === scanLimit;
+    const cursorDocument = candidates.length > page_size
+      ? pageDocuments.at(-1)
+      : snap.docs.at(-1);
 
-    const docs = snap.docs.slice(0, page_size);
-    const hasMore = snap.docs.length > page_size;
-
-    const profiles = docs
-      .filter((d) => !blockedIds.has(d.id))
-      .map((d) => {
-        const student = d.data() as any;
-        return toPublicStudentProfile({ ...student, id: d.id });
-      }) as StudentPublicProfile[];
-
-    return { profiles, has_more: hasMore };
+    return {
+      profiles,
+      has_more: hasMore,
+      next_cursor: hasMore ? cursorDocument?.id ?? null : null,
+    };
   },
 
   /**
@@ -92,59 +126,87 @@ export const MatchService = {
 
     if (fromId === toId) throw Errors.invalidArgument('Cannot send request to yourself.');
 
-    // Validate target
-    const target = await getStudent(toId);
-    if (!target || !target.is_active) throw Errors.notFound('Student');
-    if (target.college_id !== collegeId) throw Errors.wrongCollege();
+    // Validate both profiles and require mutual interest in this connection type.
+    const [sender, target] = await Promise.all([getStudent(fromId), getStudent(toId)]);
+    if (!sender || !target || !target.is_active) throw Errors.notFound('Student');
+    if (target.college_id !== collegeId || sender.college_id !== collegeId) throw Errors.wrongCollege();
     if (target.verification_status !== VerificationStatus.APPROVED) throw Errors.notFound('Student');
+    if (!sender.intent_flags?.[matchType] || !target.intent_flags?.[matchType]) {
+      throw Errors.preconditionFailed('This connection type is not enabled by both students.');
+    }
 
     // Check block
     if (await areUsersBlocked(fromId, toId)) throw Errors.blocked();
 
-    // Check existing pending request
-    const existingReq = await db.collection(COLLECTIONS.CONNECT_REQUESTS)
-      .where('from_id', '==', fromId)
-      .where('to_id', '==', toId)
-      .where('status', '==', ConnectRequestStatus.PENDING)
-      .limit(1)
-      .get();
+    const pairKey = participantPairDocumentId(fromId, toId);
+    const requestRef = db.collection(COLLECTIONS.CONNECT_REQUESTS).doc(pairKey);
+    const matchRef = db.collection(COLLECTIONS.MATCHES).doc(pairKey);
+    const blocks = db.collection(COLLECTIONS.BLOCKS);
+    const forwardBlockRef = blocks.doc(blockDocumentId(fromId, toId));
+    const reverseBlockRef = blocks.doc(blockDocumentId(toId, fromId));
 
-    if (!existingReq.empty) {
-      throw Errors.alreadyExists('You have already sent a request to this person.');
+    // Check legacy, non-deterministic records while all new records use pairKey.
+    const [legacyRequestForward, legacyRequestReverse, legacyMatchForward, legacyMatchReverse] =
+      await Promise.all([
+        db.collection(COLLECTIONS.CONNECT_REQUESTS)
+          .where('from_id', '==', fromId).where('to_id', '==', toId)
+          .where('status', '==', ConnectRequestStatus.PENDING).limit(1).get(),
+        db.collection(COLLECTIONS.CONNECT_REQUESTS)
+          .where('from_id', '==', toId).where('to_id', '==', fromId)
+          .where('status', '==', ConnectRequestStatus.PENDING).limit(1).get(),
+        db.collection(COLLECTIONS.MATCHES)
+          .where('student_a_id', '==', fromId).where('student_b_id', '==', toId)
+          .where('status', '==', MatchStatus.ACTIVE).limit(1).get(),
+        db.collection(COLLECTIONS.MATCHES)
+          .where('student_a_id', '==', toId).where('student_b_id', '==', fromId)
+          .where('status', '==', MatchStatus.ACTIVE).limit(1).get(),
+      ]);
+
+    if (!legacyRequestForward.empty || !legacyRequestReverse.empty) {
+      throw Errors.alreadyExists('A connection request between you is already pending.');
     }
-
-    // Check if already matched
-    const existingMatch = await db.collection(COLLECTIONS.MATCHES)
-      .where('student_a_id', 'in', [fromId, toId])
-      .where('student_b_id', 'in', [fromId, toId])
-      .where('status', '==', MatchStatus.ACTIVE)
-      .limit(1)
-      .get();
-
-    if (!existingMatch.empty) {
+    if (!legacyMatchForward.empty || !legacyMatchReverse.empty) {
       throw Errors.alreadyExists('You are already connected with this person.');
     }
 
-    const reqRef = await db.collection(COLLECTIONS.CONNECT_REQUESTS).add({
-      from_id: fromId,
-      to_id: toId,
-      college_id: collegeId,
-      match_type: matchType,
-      status: ConnectRequestStatus.PENDING,
-      message: message || null,
-      created_at: FieldValue.serverTimestamp(),
+    // Deterministic IDs and a transaction prevent two simultaneous requests.
+    await db.runTransaction(async (transaction) => {
+      const [requestDocument, matchDocument, forwardBlock, reverseBlock] = await Promise.all([
+        transaction.get(requestRef),
+        transaction.get(matchRef),
+        transaction.get(forwardBlockRef),
+        transaction.get(reverseBlockRef),
+      ]);
+
+      if (forwardBlock.exists || reverseBlock.exists) throw Errors.blocked();
+      if (requestDocument.exists && requestDocument.data()?.status === ConnectRequestStatus.PENDING) {
+        throw Errors.alreadyExists('A connection request between you is already pending.');
+      }
+      if (matchDocument.exists && matchDocument.data()?.status === MatchStatus.ACTIVE) {
+        throw Errors.alreadyExists('You are already connected with this person.');
+      }
+
+      transaction.set(requestRef, {
+        pair_key: pairKey,
+        from_id: fromId,
+        to_id: toId,
+        college_id: collegeId,
+        match_type: matchType,
+        status: ConnectRequestStatus.PENDING,
+        message: message || null,
+        created_at: FieldValue.serverTimestamp(),
+        responded_at: null,
+      });
     });
 
-    // Get sender name for notification
-    const sender = await getStudent(fromId);
     await NotificationService.connectRequest({
       toId,
       senderName: sender?.full_name || 'Someone',
-      requestId: reqRef.id,
+      requestId: requestRef.id,
     });
 
-    log.info(`Connect request ${reqRef.id}: ${fromId} → ${toId}`);
-    return reqRef.id;
+    log.info(`Connect request ${requestRef.id}: ${fromId} → ${toId}`);
+    return requestRef.id;
   },
 
   /**
@@ -157,58 +219,84 @@ export const MatchService = {
   }): Promise<string | null> {
     const { requestId, responderId, action } = params;
 
-    const reqRef = db.collection(COLLECTIONS.CONNECT_REQUESTS).doc(requestId);
-    const reqSnap = await reqRef.get();
+    const requestRef = db.collection(COLLECTIONS.CONNECT_REQUESTS).doc(requestId);
+    const initialRequest = await requestRef.get();
+    if (!initialRequest.exists) throw Errors.notFound('Connect request');
 
-    if (!reqSnap.exists) throw Errors.notFound('Connect request');
-
-    const req = reqSnap.data()!;
-
-    if (req.to_id !== responderId) throw Errors.forbidden();
-    if (req.status !== ConnectRequestStatus.PENDING) {
-      throw Errors.preconditionFailed('This request has already been responded to.');
+    const initialData = initialRequest.data()!;
+    if (initialData.to_id !== responderId) throw Errors.forbidden();
+    if (action === 'accept' && await areUsersBlocked(initialData.from_id, responderId)) {
+      throw Errors.blocked();
     }
 
-    if (action === 'decline') {
-      await reqRef.update({
-        status: ConnectRequestStatus.DECLINED,
+    const pairKey = initialData.pair_key || participantPairDocumentId(initialData.from_id, responderId);
+    const matchRef = db.collection(COLLECTIONS.MATCHES).doc(pairKey);
+    const blocks = db.collection(COLLECTIONS.BLOCKS);
+    const senderBlockRef = blocks.doc(blockDocumentId(initialData.from_id, responderId));
+    const responderBlockRef = blocks.doc(blockDocumentId(responderId, initialData.from_id));
+
+    const request = await db.runTransaction(async (transaction) => {
+      const [requestDocument, matchDocument, senderBlock, responderBlock] = await Promise.all([
+        transaction.get(requestRef),
+        transaction.get(matchRef),
+        transaction.get(senderBlockRef),
+        transaction.get(responderBlockRef),
+      ]);
+      if (action === 'accept' && (senderBlock.exists || responderBlock.exists)) {
+        throw Errors.blocked();
+      }
+      if (!requestDocument.exists) throw Errors.notFound('Connect request');
+
+      const currentRequest = requestDocument.data()!;
+      if (currentRequest.to_id !== responderId) throw Errors.forbidden();
+      if (currentRequest.status !== ConnectRequestStatus.PENDING) {
+        throw Errors.preconditionFailed('This request has already been responded to.');
+      }
+
+      if (action === 'decline') {
+        transaction.update(requestRef, {
+          status: ConnectRequestStatus.DECLINED,
+          responded_at: FieldValue.serverTimestamp(),
+        });
+        return currentRequest;
+      }
+
+      if (matchDocument.exists && matchDocument.data()?.status === MatchStatus.ACTIVE) {
+        throw Errors.alreadyExists('You are already connected with this person.');
+      }
+
+      transaction.update(requestRef, {
+        status: ConnectRequestStatus.ACCEPTED,
         responded_at: FieldValue.serverTimestamp(),
       });
+      transaction.set(matchRef, {
+        pair_key: pairKey,
+        student_a_id: currentRequest.from_id,
+        student_b_id: responderId,
+        participant_ids: [currentRequest.from_id, responderId],
+        college_id: currentRequest.college_id,
+        match_type: currentRequest.match_type,
+        status: MatchStatus.ACTIVE,
+        matched_at: FieldValue.serverTimestamp(),
+        last_message_at: null,
+        last_message_preview: null,
+      });
+      return currentRequest;
+    });
+
+    if (action === 'decline') {
       log.info(`Request ${requestId} declined by ${responderId}`);
       return null;
     }
 
-    // Accept — atomic batch
-    const matchRef = db.collection(COLLECTIONS.MATCHES).doc();
-    const batch = db.batch();
-
-    batch.update(reqRef, {
-      status: ConnectRequestStatus.ACCEPTED,
-      responded_at: FieldValue.serverTimestamp(),
-    });
-
-    batch.set(matchRef, {
-      student_a_id: req.from_id,
-      student_b_id: responderId,
-      college_id: req.college_id,
-      match_type: req.match_type,
-      status: MatchStatus.ACTIVE,
-      matched_at: FieldValue.serverTimestamp(),
-      last_message_at: null,
-      last_message_preview: null,
-    });
-
-    await batch.commit();
-
-    // Notify sender of match
     const responder = await getStudent(responderId);
     await NotificationService.newMatch({
-      toId: req.from_id,
+      toId: request.from_id,
       matchedName: responder?.full_name || 'Someone',
       matchId: matchRef.id,
     });
 
-    log.info(`Match created: ${matchRef.id} (${req.from_id} ↔ ${responderId})`);
+    log.info(`Match created: ${matchRef.id} (${request.from_id} ↔ ${responderId})`);
     return matchRef.id;
   },
 

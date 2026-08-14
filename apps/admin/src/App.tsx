@@ -10,15 +10,15 @@ import ReportsPage from './pages/ReportsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuthState();
+  const { user, role, loading } = useAuthState();
   if (loading) return <div className="flex items-center justify-content-center" style={{height:'100vh'}}><div className="spinner" /></div>;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user || role !== 'admin') return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/admin">
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route

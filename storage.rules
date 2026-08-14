@@ -2,10 +2,45 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
 
-    match /verification_photos/{userId}/{allPaths=**} {
-      allow read, write: if request.auth != null
-                         && request.auth.uid == userId;
+    function isImage() {
+      return request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
+    function isMatchParticipant(matchId) {
+      let matchDocument = firestore.get(
+        /databases/(default)/documents/matches/$(matchId)
+      ).data;
+      return signedIn()
+        && matchDocument.status == 'active'
+        && (matchDocument.student_a_id == request.auth.uid
+          || matchDocument.student_b_id == request.auth.uid);
+    }
+
+    // Verification evidence is private to its owner. Moderators receive a
+    // short-lived signed URL from the protected verification queue callable.
+    match /verification_photos/{userId}/{fileName} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.size <= 8 * 1024 * 1024
+        && isImage()
+        && request.resource.metadata.ownerId == userId;
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
+    // Chat media remains private to participants of an active match.
+    match /chat_media/{matchId}/{fileName} {
+      allow read: if isMatchParticipant(matchId);
+      allow create: if isMatchParticipant(matchId)
+        && request.resource.size <= 25 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)|video/mp4')
+        && request.resource.metadata.uploader_id == request.auth.uid
+        && request.resource.metadata.match_id == matchId;
+      allow update, delete: if false;
     }
 
     match /{allPaths=**} {

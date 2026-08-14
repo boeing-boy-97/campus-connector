@@ -1,20 +1,22 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getVerificationQueue, reviewVerification } from '../services/adminService';
-import { CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CheckCircle, XCircle, Clock } from 'lucide-react';
+
+type VerificationItem = Awaited<ReturnType<typeof getVerificationQueue>>[number];
 
 export default function VerificationPage() {
-  const [selected, setSelected] = useState<any>(null);
+  const [selected, setSelected] = useState<VerificationItem | null>(null);
   const [notes, setNotes] = useState('');
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error: queueError } = useQuery({
     queryKey: ['verification-queue'],
     queryFn: getVerificationQueue,
     refetchInterval: 30_000,
   });
 
-  const { mutate: review, isPending: reviewing } = useMutation({
+  const { mutate: review, isPending: reviewing, error: reviewError } = useMutation({
     mutationFn: ({ id, action, notes }: { id: string; action: 'approve' | 'reject'; notes?: string }) =>
       reviewVerification(id, action, notes),
     onSuccess: () => {
@@ -53,13 +55,19 @@ export default function VerificationPage() {
               <div className="skeleton" style={{ height: 14, width: '60%', borderRadius: 4 }} />
             </div>
           ))
+        ) : queueError ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">⚠️</div>
+            <div className="empty-state-title">Queue unavailable</div>
+            <p className="text-sm">{queueError instanceof Error ? queueError.message : 'Please try again.'}</p>
+          </div>
         ) : data?.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">✅</div>
             <div className="empty-state-title">Queue is clear!</div>
             <p className="text-sm">No pending verifications.</p>
           </div>
-        ) : data?.map((item: any) => (
+        ) : data?.map((item) => (
           <button
             key={item.id}
             onClick={() => { setSelected(item); setNotes(''); }}
@@ -74,7 +82,7 @@ export default function VerificationPage() {
             <div className="flex items-center gap-3">
               <div style={{ position: 'relative' }}>
                 <img
-                  src={item.profile_photo || '/avatar-placeholder.png'}
+                  src={item.profile_photos[0] || '/avatar-placeholder.png'}
                   className="avatar"
                   style={{ width: 44, height: 44 }}
                   alt=""
@@ -144,13 +152,13 @@ export default function VerificationPage() {
               <h4 style={{ marginBottom: 16 }}>Photos</h4>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
                 {/* Verification photo — shown only to admins */}
-                {selected.uniform_photo_url && (
+                {selected.verification_photo_url && (
                   <div>
                     <div className="text-xs text-muted mb-4" style={{ marginBottom: 8 }}>
                       🔒 Verification Photo (Private)
                     </div>
                     <img
-                      src={selected.uniform_photo_url}
+                      src={selected.verification_photo_url}
                       className="photo-preview"
                       alt="Verification photo"
                     />
@@ -185,6 +193,12 @@ export default function VerificationPage() {
                   style={{ resize: 'vertical', fontFamily: 'inherit' }}
                 />
               </div>
+
+              {reviewError && (
+                <p className="form-error" role="alert">
+                  {reviewError instanceof Error ? reviewError.message : 'The review could not be saved.'}
+                </p>
+              )}
 
               <div className="flex gap-2" style={{ marginTop: 8 }}>
                 <button

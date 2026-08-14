@@ -143,16 +143,14 @@ class FirebaseService {
   static Future<Map<String, dynamic>> sendMessage({
     required String matchId,
     String? text,
-    String? mediaUrl,
-    String? mediaType,
+    String? mediaPath,
   }) async {
     final result = await _functions
         .httpsCallable('sendMessage')
         .call({
       'match_id': matchId,
       if (text != null) 'text': text,
-      if (mediaUrl != null) 'media_url': mediaUrl,
-      if (mediaType != null) 'media_type': mediaType,
+      if (mediaPath != null) 'media_path': mediaPath,
     });
     return Map<String, dynamic>.from(result.data);
   }

@@ -2,7 +2,7 @@
 // ║  validate.middleware.ts — Zod schema validation wrapper                  ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import { z, ZodSchema, ZodError } from 'zod';
+import { z, ZodSchema } from 'zod';
 import { Errors } from '../utils/errors';
 
 /**
@@ -33,8 +33,12 @@ export function validate<T>(schema: ZodSchema<T>, data: unknown): T {
 // ─── Reusable schema primitives ────────────────────────────────────────────────
 
 export const Schemas = {
-  /** Firebase document ID */
-  docId: z.string().min(1).max(128).trim(),
+  /** A single Firebase document ID, never a path or whitespace-delimited value. */
+  docId: z.string()
+    .trim()
+    .min(1)
+    .max(128)
+    .regex(/^[^/\s]+$/, 'Invalid document ID'),
 
   /** College email (enforced as .edu domain or .ac.in) */
   collegeEmail: z.string()

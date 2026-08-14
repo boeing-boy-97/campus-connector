@@ -1,17 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getReports, updateReportStatus } from '../services/adminService';
-import { Flag, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Flag, CheckCircle, XCircle } from 'lucide-react';
+
+type ReviewStatus = 'action_taken' | 'dismissed';
 
 export default function ReportsPage() {
   const queryClient = useQueryClient();
-  const { data: reports, isLoading } = useQuery({
+  const { data: reports, isLoading, isError } = useQuery({
     queryKey: ['reports'],
     queryFn: getReports,
     refetchInterval: 60_000,
   });
 
-  const { mutate: resolve } = useMutation({
-    mutationFn: ({ id, status, notes }: { id: string; status: string; notes?: string }) =>
+  const { mutate: resolve, isPending: reviewPending, isError: reviewFailed } = useMutation({
+    mutationFn: ({ id, status, notes }: { id: string; status: ReviewStatus; notes?: string }) =>
       updateReportStatus(id, status, notes),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reports'] });
@@ -46,6 +48,12 @@ export default function ReportsPage() {
               </div>
             ))}
           </div>
+        ) : isError ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">⚠️</div>
+            <div className="empty-state-title">Could not load reports</div>
+            <p className="text-sm">Check your connection and administrator permissions, then try again.</p>
+          </div>
         ) : reports?.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">✅</div>
@@ -54,6 +62,11 @@ export default function ReportsPage() {
           </div>
         ) : (
           <div className="card">
+            {reviewFailed && (
+              <p className="text-sm" role="alert" style={{ color: 'var(--danger)', padding: '12px 16px 0' }}>
+                The report could not be reviewed. Refresh and try again.
+              </p>
+            )}
             <div className="table-wrapper">
               <table>
                 <thead>
@@ -67,7 +80,7 @@ export default function ReportsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {reports?.map((r: any) => (
+                  {reports?.map((r) => (
                     <tr key={r.id}>
                       <td><span className="badge badge-info">{r.reporter_id?.slice(0, 8)}…</span></td>
                       <td><span className="badge badge-neutral">{r.reported_id?.slice(0, 8)}…</span></td>
@@ -80,13 +93,15 @@ export default function ReportsPage() {
                         <div className="flex gap-2">
                           <button
                             className="btn btn-success btn-sm"
-                            onClick={() => resolve({ id: r.id, status: 'action_taken', notes: 'User warned/suspended' })}
+                            disabled={reviewPending}
+                            onClick={() => resolve({ id: r.id, status: 'action_taken', notes: 'User warned or suspended after moderator review.' })}
                             title="Take Action"
                           >
                             <CheckCircle size={14} /> Action Taken
                           </button>
                           <button
                             className="btn btn-outline btn-sm"
+                            disabled={reviewPending}
                             onClick={() => resolve({ id: r.id, status: 'dismissed' })}
                             title="Dismiss"
                           >

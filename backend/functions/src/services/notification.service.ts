@@ -66,7 +66,7 @@ export const NotificationService = {
     });
   },
 
-  async connectRequestDeclined(params: { toId: string; requestId: string }) {
+  async connectRequestDeclined(_params: { toId: string; requestId: string }) {
     // Silent — no notification on decline (better UX, avoids embarrassment)
     // Only create in-app record if explicitly needed
   },

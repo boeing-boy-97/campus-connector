@@ -3,7 +3,7 @@
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 import { db, FieldValue } from '../config/firebase';
-import { getDoc, getCollege, writeAuditLog } from '../utils/firestore.utils';
+import { getCollege, writeAuditLog } from '../utils/firestore.utils';
 import { Errors } from '../utils/errors';
 import { createLogger } from '../utils/logger';
 import { COLLECTIONS } from '../../../../shared/constants';

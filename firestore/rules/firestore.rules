@@ -89,9 +89,8 @@ service cloud.firestore {
     // ─────────────────────────────────────────────────────────────────────────
     match /colleges/{collegeId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin();
-      allow update: if isAdmin();
-      allow delete: if false; // Never hard-delete colleges
+      // College lifecycle writes are validated and audited by Cloud Functions.
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -99,37 +98,12 @@ service cloud.firestore {
     // ─────────────────────────────────────────────────────────────────────────
     match /students/{studentId} {
 
-      // Student can read their own profile (always)
-      // Verified students can read OTHER verified students from SAME college only
-      // Admins can read any student
-      allow read: if isSelf(studentId)
-        || isAdmin()
-        || (isVerified()
-            && sameCollege(resource.data.college_id)
-            && resource.data.verification_status == 'approved');
+      // Student documents contain private identity and consent fields, so peers
+      // receive an allowlisted profile through getProfile/recommendations instead.
+      allow read: if isSelf(studentId) || isAdmin();
 
-      // Only the student themselves can create their own profile (during signup)
-      allow create: if isSelf(studentId)
-        && request.resource.data.keys().hasAll([
-          'college_id', 'college_email', 'full_name',
-          'verification_status', 'created_at'
-        ])
-        && request.resource.data.verification_status == 'pending'
-        && validString(request.resource.data.full_name, 100)
-        && validString(request.resource.data.bio, 500);
-
-      // Student can update their own profile (cannot change college_id or verification_status)
-      // Admins can update any field
-      allow update: if isAdmin()
-        || (isSelf(studentId)
-            && request.resource.data.college_id == resource.data.college_id
-            && request.resource.data.college_email == resource.data.college_email
-            && request.resource.data.verification_status == resource.data.verification_status
-            && validString(request.resource.data.bio, 500)
-            && validString(request.resource.data.full_name, 100));
-
-      // Only admins can delete (soft-delete preferred)
-      allow delete: if isAdmin();
+      // Profile lifecycle writes are validated and rate-limited by Cloud Functions.
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -140,15 +114,8 @@ service cloud.firestore {
       allow read: if isModerator()
         || (isAuthenticated() && resource.data.student_id == uid());
 
-      // Student can create a verification request for themselves
-      allow create: if isAuthenticated()
-        && request.resource.data.student_id == uid()
-        && request.resource.data.review_status == 'pending';
-
-      // Only moderators/admins can update (review the request)
-      allow update: if isModerator();
-
-      allow delete: if false;
+      // Submission and review are atomic, validated Cloud Function operations.
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -158,17 +125,8 @@ service cloud.firestore {
       allow read: if isAuthenticated()
         && (resource.data.from_id == uid() || resource.data.to_id == uid());
 
-      allow create: if isVerified()
-        && request.resource.data.from_id == uid()
-        && sameCollege(getStudentDoc(request.resource.data.to_id).college_id)
-        && notBlocked(uid(), request.resource.data.to_id);
-
-      // Only the recipient can accept/decline
-      allow update: if isAuthenticated()
-        && resource.data.to_id == uid();
-
-      allow delete: if isAuthenticated()
-        && resource.data.from_id == uid();
+      // Requests are created/responded to transactionally by Cloud Functions.
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -181,17 +139,8 @@ service cloud.firestore {
             && (resource.data.student_a_id == uid()
                 || resource.data.student_b_id == uid()));
 
-      // Matches are ONLY created by Cloud Functions (acceptRequest)
-      allow create: if false;
-
-      // Students can unmatch (update status to 'unmatched')
-      allow update: if isAuthenticated()
-        && (resource.data.student_a_id == uid() || resource.data.student_b_id == uid())
-        && request.resource.data.status == 'unmatched'
-        && request.resource.data.student_a_id == resource.data.student_a_id
-        && request.resource.data.student_b_id == resource.data.student_b_id;
-
-      allow delete: if false;
+      // Match transitions and counters are owned by Cloud Functions.
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -208,24 +157,8 @@ service cloud.firestore {
         )
       );
 
-      // Sender must be part of the match; match must be active
-      allow create: if isVerified()
-        && request.resource.data.sender_id == uid()
-        && matchExists(request.resource.data.match_id)
-        && get(/databases/$(database)/documents/matches/$(request.resource.data.match_id)).data.status == 'active'
-        && (
-          get(/databases/$(database)/documents/matches/$(request.resource.data.match_id)).data.student_a_id == uid()
-          || get(/databases/$(database)/documents/matches/$(request.resource.data.match_id)).data.student_b_id == uid()
-        )
-        && validString(request.resource.data.text, 2000);
-
-      // Only the recipient can mark as read
-      allow update: if isAuthenticated()
-        && resource.data.sender_id != uid()
-        && request.resource.data.read_at != null
-        && request.resource.data.text == resource.data.text;
-
-      allow delete: if false;
+      // Message sending, read receipts, and deletion use protected callables.
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -236,17 +169,8 @@ service cloud.firestore {
       allow read: if isModerator()
         || (isAuthenticated() && resource.data.reporter_id == uid());
 
-      // Any verified student can file a report
-      allow create: if isVerified()
-        && request.resource.data.reporter_id == uid()
-        && request.resource.data.reported_id != uid()
-        && request.resource.data.status == 'pending'
-        && validString(request.resource.data.reason, 1000);
-
-      // Only moderators/admins can update report status
-      allow update: if isModerator();
-
-      allow delete: if false;
+      // Reports and reviews are validated, rate-limited, and audited by callables.
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -257,15 +181,8 @@ service cloud.firestore {
       allow read: if isAuthenticated()
         && (resource.data.blocker_id == uid() || resource.data.blocked_id == uid());
 
-      allow create: if isVerified()
-        && request.resource.data.blocker_id == uid()
-        && request.resource.data.blocked_id != uid();
-
-      // Blocker can unblock (delete)
-      allow delete: if isAuthenticated()
-        && resource.data.blocker_id == uid();
-
-      allow update: if false;
+      // Block state and automatic unmatching are handled by Cloud Functions.
+      allow write: if false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

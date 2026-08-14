@@ -2,7 +2,7 @@
 // ║  chat/readMessage.ts — Mark chat messages as read                        ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions/v1';
 import { z } from 'zod';
 import { requireVerified } from '../../middleware/auth.middleware';
 import { validate, Schemas } from '../../middleware/validate.middleware';

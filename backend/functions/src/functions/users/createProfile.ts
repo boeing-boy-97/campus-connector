@@ -2,7 +2,7 @@
 // ║  createProfile.ts — Student profile creation                            ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions/v1';
 import { z } from 'zod';
 import { db, FieldValue, Timestamp } from '../../config/firebase';
 import { requireCollegeLinked } from '../../middleware/auth.middleware';
@@ -10,8 +10,7 @@ import { validate } from '../../middleware/validate.middleware';
 import { handleUnknownError, Errors } from '../../utils/errors';
 import { createLogger } from '../../utils/logger';
 import { COLLECTIONS, BUSINESS_RULES } from '../../../../../shared/constants';
-import { Gender, MatchType, VerificationStatus } from '../../../../../shared/enums';
-import { StudentService } from '../../services/student.service';
+import { Gender, VerificationStatus } from '../../../../../shared/enums';
 
 const log = createLogger('createProfile');
 

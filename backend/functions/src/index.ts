@@ -48,6 +48,8 @@ export { reportUser }               from './functions/moderation/reportUser';
 export { blockUser }                from './functions/moderation/blockUser';
 export { unblockUser }              from './functions/moderation/unblockUser';
 export { reviewVerificationPhoto }  from './functions/moderation/verifyPhoto';
+export { getVerificationQueue }      from './functions/moderation/getVerificationQueue';
+export { reviewReport }              from './functions/moderation/reviewReport';
 
 // ─── Notifications ────────────────────────────────────────────────────────────
 export { markNotificationsRead }  from './functions/notifications/markRead';

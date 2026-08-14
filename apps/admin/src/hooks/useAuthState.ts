@@ -1,18 +1,41 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { onIdTokenChanged, type User } from 'firebase/auth';
 import { auth } from '../services/firebase';
-import { onAuthStateChanged, User } from 'firebase/auth';
 
-export function useAuthState() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+export type AdminRole = 'admin' | 'moderator';
+
+interface AuthState {
+  user: User | null;
+  role: AdminRole | null;
+  loading: boolean;
+}
+
+export function useAuthState(): AuthState {
+  const [state, setState] = useState<AuthState>({ user: null, role: null, loading: true });
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false);
+    let active = true;
+    const unsubscribe = onIdTokenChanged(auth, async (user) => {
+      if (!user) {
+        if (active) setState({ user: null, role: null, loading: false });
+        return;
+      }
+
+      try {
+        const token = await user.getIdTokenResult();
+        const claim = token.claims.role;
+        const role = claim === 'admin' || claim === 'moderator' ? claim : null;
+        if (active) setState({ user, role, loading: false });
+      } catch {
+        if (active) setState({ user: null, role: null, loading: false });
+      }
     });
-    return unsubscribe;
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
-  return { user, loading };
+  return state;
 }

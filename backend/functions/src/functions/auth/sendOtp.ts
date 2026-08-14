@@ -2,14 +2,14 @@
 // ║  sendOtp — Full production implementation                               ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions/v1';
 import nodemailer from 'nodemailer';
 import { z } from 'zod';
 import { db, FieldValue } from '../../config/firebase';
 import { validate, Schemas } from '../../middleware/validate.middleware';
 import { RateLimits } from '../../middleware/rateLimit.middleware';
 import { Errors, handleUnknownError } from '../../utils/errors';
-import { generateOtp, hashOtp, getOtpExpiry, maskEmail } from '../../utils/otp.utils';
+import { generateOtp, hashOtp, getOtpExpiry, maskEmail, otpRecordId } from '../../utils/otp.utils';
 import { createLogger } from '../../utils/logger';
 import { COLLECTIONS } from '../../../../../shared/constants';
 import { CollegeService } from '../../services/college.service';
@@ -36,7 +36,7 @@ async function deliverOtp(email: string, otp: string, collegeName: string): Prom
 }
 
 const sendOtpSchema = z.object({
-  email: Schemas.collegeEmail,
+  email: Schemas.anyEmail,
   consent_given: z.boolean().refine((v) => v === true, {
     message: 'You must agree to the Terms of Service and Privacy Policy.',
   }),
@@ -46,7 +46,7 @@ const sendOtpSchema = z.object({
 export const sendOtp = functions
   .region('asia-south1')
   .runWith({ memory: '256MB', timeoutSeconds: 60 })
-  .https.onCall(async (data, context) => {
+  .https.onCall(async (data, _context) => {
     try {
       const { email, consent_given, consent_version } = validate(sendOtpSchema, data);
 
@@ -72,8 +72,9 @@ export const sendOtp = functions
       const otpHash = await hashOtp(otp);
       const expiresAt = getOtpExpiry();
 
-      // Upsert OTP record
-      await db.collection(COLLECTIONS.OTP_RECORDS).doc(email).set({
+      // Upsert under a path-safe, non-reversible identifier.
+      const otpReference = db.collection(COLLECTIONS.OTP_RECORDS).doc(otpRecordId(email));
+      await otpReference.set({
         email,
         otp_hash: otpHash,
         expires_at: expiresAt,
@@ -95,7 +96,7 @@ export const sendOtp = functions
           log.info(`OTP delivered to ${maskEmail(email)}`);
         } catch (deliveryError) {
           // Remove an undelivered code so it can never be used later.
-          await db.collection(COLLECTIONS.OTP_RECORDS).doc(email).delete();
+          await otpReference.delete();
           log.error(`OTP delivery failed for ${maskEmail(email)}`, deliveryError);
           if (deliveryError instanceof functions.https.HttpsError) throw deliveryError;
           throw Errors.internal('Unable to send the verification code. Please try again later.');

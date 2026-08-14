@@ -2,16 +2,17 @@
 // ║  moderation/reportUser.ts — Report a student profile or chat            ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions/v1';
 import { z } from 'zod';
 import { db, FieldValue } from '../../config/firebase';
-import { requireAuth } from '../../middleware/auth.middleware';
+import { requireVerified } from '../../middleware/auth.middleware';
 import { validate, Schemas } from '../../middleware/validate.middleware';
 import { RateLimits } from '../../middleware/rateLimit.middleware';
 import { handleUnknownError, Errors } from '../../utils/errors';
 import { COLLECTIONS, REPORT_LIMITS } from '../../../../../shared/constants';
 import { ReportReason, ReportCategory, ReportStatus } from '../../../../../shared/enums';
 import { createLogger } from '../../utils/logger';
+import { getStudent } from '../../utils/firestore.utils';
 
 const log = createLogger('reportUser');
 
@@ -20,7 +21,6 @@ const schema = z.object({
   category: z.nativeEnum(ReportCategory),
   reason: z.nativeEnum(ReportReason),
   description: z.string().max(REPORT_LIMITS.MAX_DESCRIPTION_LENGTH).trim().optional(),
-  evidence_photos: z.array(z.string().url()).max(REPORT_LIMITS.MAX_EVIDENCE_PHOTOS).optional(),
 });
 
 export const reportUser = functions
@@ -28,12 +28,16 @@ export const reportUser = functions
   .runWith({ memory: '256MB', timeoutSeconds: 30 })
   .https.onCall(async (data, context) => {
     try {
-      const authCtx = requireAuth(context);
+      const authCtx = requireVerified(context);
       await RateLimits.reportUser(authCtx.uid);
       const parsed = validate(schema, data);
 
       if (authCtx.uid === parsed.reported_id) {
         throw Errors.invalidArgument('You cannot report yourself.');
+      }
+      const reportedStudent = await getStudent(parsed.reported_id);
+      if (!reportedStudent || reportedStudent.college_id !== authCtx.collegeId) {
+        throw Errors.notFound('Student');
       }
 
       const docRef = await db.collection(COLLECTIONS.REPORTS).add({
@@ -43,7 +47,6 @@ export const reportUser = functions
         category: parsed.category,
         reason: parsed.reason,
         description: parsed.description || null,
-        evidence_photos: parsed.evidence_photos || [],
         status: ReportStatus.PENDING,
         created_at: FieldValue.serverTimestamp(),
       });

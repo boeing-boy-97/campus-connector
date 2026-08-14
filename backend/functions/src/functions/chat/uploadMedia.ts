@@ -2,7 +2,7 @@
 // ║  chat/uploadMedia.ts — Generate signed URL for chat media upload         ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions/v1';
 import { z } from 'zod';
 import { requireVerified } from '../../middleware/auth.middleware';
 import { validate, Schemas } from '../../middleware/validate.middleware';
