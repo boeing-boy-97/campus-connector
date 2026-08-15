@@ -22,11 +22,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
-          cache-dependency-path: apps/admin/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
+        # Run npm ci at the repository root so the workspace lockfile is used.
         run: npm ci
 
       - name: Lint

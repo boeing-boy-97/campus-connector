@@ -19,12 +19,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
-          cache-dependency-path: backend/functions/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: backend/functions
+        # Install at the repository root so workspace installs succeed and the
+        # cache key resolves to the single root lockfile (monorepo workspace).
         run: npm ci
 
       - name: TypeScript type check
