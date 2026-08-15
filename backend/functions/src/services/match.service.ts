@@ -113,8 +113,8 @@ export const MatchService = {
     // scan window (otherwise the skipped tail would be re-scanned forever), and
     // the last document *returned* when candidates remain within the window.
     const cursorDocument = candidates.length > page_size
-      ? pageDocuments.at(-1)
-      : snap.docs.at(-1);
+      ? pageDocuments[pageDocuments.length - 1]
+      : snap.docs[snap.docs.length - 1];
 
     return {
       profiles,
