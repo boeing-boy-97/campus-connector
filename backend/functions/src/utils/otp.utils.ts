@@ -3,11 +3,19 @@
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 import { createHash, randomBytes, randomInt, scrypt as nodeScrypt, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
 import { createLogger } from './logger';
 
 const log = createLogger('otp.utils');
-const scrypt = promisify(nodeScrypt);
+const scrypt = (
+  password: string | Buffer | Uint8Array,
+  salt: string | Buffer | Uint8Array,
+  keyLength: number
+): Promise<Buffer> => new Promise((resolve, reject) => {
+  nodeScrypt(password, salt, keyLength, (error: Error | null, derivedKey: Buffer) => {
+    if (error) reject(error);
+    else resolve(derivedKey);
+  });
+});
 
 const OTP_LENGTH = 6;
 const OTP_EXPIRY_MINUTES = 10;

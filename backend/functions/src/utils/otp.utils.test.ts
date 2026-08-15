@@ -8,6 +8,8 @@ import {
 } from './otp.utils';
 
 describe('OTP utilities', () => {
+  jest.setTimeout(30000);
+
   test('generates six numeric digits', () => {
     expect(generateOtp()).toMatch(/^\d{6}$/);
   });

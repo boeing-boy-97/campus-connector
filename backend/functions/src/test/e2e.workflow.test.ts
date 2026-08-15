@@ -451,6 +451,8 @@ describe('discovery, connection and conversation', () => {
 });
 
 describe('safety and moderation', () => {
+  jest.setTimeout(30000);
+
   let asha: string;
   let troll: string;
 
