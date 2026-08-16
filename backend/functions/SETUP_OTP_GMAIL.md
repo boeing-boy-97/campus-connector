@@ -1,154 +1,92 @@
-# ⚡ QUICK FIX: OTP Email Not Coming - Complete Setup
+# ⚡ OTP Email Setup (Gmail SMTP)
 
-## 🎯 What's Wrong
-OTP emails are not being sent because **SMTP credentials are missing or incorrect**.
+The `sendOtp` function delivers OTPs over SMTP. It reads `SMTP_HOST`,
+`SMTP_PORT`, `SMTP_USER`, and `SMTP_PASS` from:
+
+1. **Runtime environment variables** (`process.env`) — set via the GCP console,
+   `gcloud`, or Firebase Secrets. **Recommended for production.**
+2. **Legacy `functions.config().smtp.*`** — set via
+   `firebase functions:config:set smtp.*`. Kept for backwards compatibility.
+3. **`backend/functions/.env.local`** — loaded by the local emulator only.
+
+> ⚠️ `firebase functions:config:set` does **not** populate `process.env`, which is
+> why the code reads `functions.config()` as a fallback. If you configure SMTP one
+> way and the function still says "Email service not configured", double-check
+> which source you actually configured.
 
 ---
 
-## 🔧 STEP-BY-STEP FIX (5 minutes)
+## 1. Get a Gmail App Password
 
-### Step 1: Create `.env.local` File
+1. Enable 2FA: https://myaccount.google.com/security
+2. Create an app password: https://myaccount.google.com/apppasswords
+3. Select **Mail** → your device → copy the 16-char password (remove spaces).
 
-Create a new file: `backend/functions/.env.local`
+---
+
+## 2a. Production — runtime environment variables (recommended)
+
+GCP console → Cloud Functions → `sendOtp` → Edit → Runtime environment variables:
+
+```
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-gmail@gmail.com
+SMTP_PASS=your-16-char-app-password
+```
+
+Or via `gcloud`:
+
+```bash
+gcloud functions deploy sendOtp \
+  --region=asia-south1 \
+  --set-env-vars SMTP_HOST=smtp.gmail.com,SMTP_PORT=587,SMTP_USER=your-gmail@gmail.com \
+  --set-secrets SMTP_PASS=SMTP_PASS:latest
+```
+
+---
+
+## 2b. Production — legacy Firebase config (fallback)
+
+```bash
+cd backend/functions
+firebase functions:config:set smtp.host="smtp.gmail.com" smtp.port="587" \
+  smtp.user="your-gmail@gmail.com" smtp.pass="your-16-char-app-password"
+npm run build && npm run deploy
+```
+
+---
+
+## 2c. Local emulator — `.env.local`
+
+Copy `.env.local.example` → `.env.local`:
 
 ```env
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-gmail@gmail.com
-SMTP_PASS=your-16-character-app-password
+SMTP_PASS=your-16-char-app-password
 ```
 
-### Step 2: Get Gmail App Password
-
-**If using Gmail:**
-
-1. Go to: https://myaccount.google.com/apppasswords
-2. Select "Mail" → "Windows Computer" (or your device)
-3. Google will generate a **16-character password**
-4. Copy it (remove all spaces)
-5. Paste it as `SMTP_PASS` in `.env.local`
-
-**Example:**
-```
-SMTP_PASS=abcd efgh ijkl mnop
-           ↓ Remove spaces ↓
-SMTP_PASS=abcdefghijklmnop
-```
-
-### Step 3: Rebuild & Test
-
-```bash
-cd backend/functions
-
-# Install dependencies if needed
-npm install
-
-# Build the code
-npm run build
-
-# For LOCAL TESTING: Start emulator
-npm run serve
-
-# For PRODUCTION: Deploy
-npm run deploy
-```
-
-### Step 4: Test OTP Email
-
-1. Go to your app's login page
-2. Enter your college email (e.g., student@college.edu)
-3. **Important:** The college domain MUST be registered in Firebase
-4. Click "Send OTP"
-5. **Check your email inbox within 10 seconds**
+Then `npm run serve`. Without credentials the emulator prints the OTP to the
+console (`[DEV MODE] OTP for …: 123456`).
 
 ---
 
-## ❌ Troubleshooting
+## 3. Test
 
-### "Email service not configured. Contact admin."
-- ✅ Make sure `.env.local` exists in `backend/functions/`
-- ✅ Verify `SMTP_USER` and `SMTP_PASS` are set
-- ✅ Run `npm run build` after creating `.env.local`
-
-### Email not arriving
-- ✅ Check **spam/junk folder**
-- ✅ Check **Gmail security settings** (allow "Less secure app access" if needed)
-- ✅ Make sure college domain is **approved** in Firebase
-
-### "SMTP credentials not configured"
-- ✅ Restart the emulator/server after adding `.env.local`
-- ✅ Make sure there are **no spaces** in passwords
-
-### Authentication failed - 535-5.7.8
-- ✅ Your Gmail **App Password is wrong** - regenerate it
-- ✅ Make sure you're using **App Password**, not regular password
-- ✅ 2FA must be **enabled** on your Gmail account
+1. Make sure the email's domain belongs to an **approved** college in Firestore
+   (`colleges/{id}.verified_status == "approved"`).
+2. Enter the college email in the app and request an OTP.
+3. Check the inbox (and spam) within ~10 seconds.
 
 ---
 
-## 📋 Using Other Email Providers
+## Troubleshooting
 
-**SendGrid:**
-```env
-SMTP_HOST=smtp.sendgrid.net
-SMTP_PORT=587
-SMTP_USER=apikey
-SMTP_PASS=SG.xxxxxxxxxxxxx
-```
-
-**AWS SES:**
-```env
-SMTP_HOST=email-smtp.us-east-1.amazonaws.com
-SMTP_PORT=587
-SMTP_USER=your-iam-user@
-SMTP_PASS=your-smtp-password
-```
-
-**Resend:**
-```env
-SMTP_HOST=smtp.resend.com
-SMTP_PORT=587
-SMTP_USER=resend
-SMTP_PASS=re_xxxxxxxxxxxxxxx
-```
-
----
-
-## ✅ Verification Checklist
-
-After setup, verify:
-
-- [ ] `.env.local` file exists in `backend/functions/`
-- [ ] `SMTP_USER` and `SMTP_PASS` are not empty
-- [ ] College domain is registered in Firebase (ask admin)
-- [ ] College has `verified_status: "approved"` in Firestore
-- [ ] Ran `npm run build` after creating `.env.local`
-- [ ] Restarted emulator/server
-
----
-
-## 🔍 View Email Logs
-
-Check if email function is being called:
-
-```bash
-firebase functions:log
-```
-
-Look for messages like:
-```
-✓ OTP email sent successfully to t***@college.edu
-✗ OTP email delivery failed for t***@college.edu
-[DEV MODE] OTP for t***@college.edu: 123456
-```
-
----
-
-## Code Changes Made
-
-- ✅ Updated `sendOtp.ts` to read from `.env.local`
-- ✅ Added detailed error logging
-- ✅ SMTP connection verification before sending
-- ✅ Better error messages for debugging
-
-The code now sends emails **reliably** without complex Firebase config setup.
+| Symptom | Fix |
+|---|---|
+| `Email service not configured` | SMTP vars missing from the deployed function's env; redeploy after setting them. |
+| `Email delivery failed: …` | Wrong app password / provider rejected; check `firebase functions:log`. |
+| `535-5.7.8` auth failed | Regenerate the Gmail app password; ensure 2FA is enabled. |
+| `otp_sent: false` in the app | No approved college matches the email domain. |

@@ -17,11 +17,10 @@ export type MatchItem = {
 
 interface ConnectionsViewProps {
   connections: MatchItem[];
-  currentUserId: string;
   onOpenChat: (matchId: string) => void;
 }
 
-export function ConnectionsView({ connections, currentUserId, onOpenChat }: ConnectionsViewProps) {
+export function ConnectionsView({ connections, onOpenChat }: ConnectionsViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredConnections = useMemo(() => {

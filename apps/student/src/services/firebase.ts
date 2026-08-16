@@ -14,15 +14,31 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-// Validate required config
-const missingKeys = Object.entries(firebaseConfig)
-  .filter(([, v]) => !v)
-  .map(([k]) => k);
+// Validate required config.
+// NOTE: these values are compiled into the bundle from VITE_FIREBASE_* env vars
+// (e.g. Vercel project → Settings → Environment Variables). They must point to
+// the SAME Firebase project that hosts the Cloud Functions (region asia-south1).
+// We check the resolved `firebaseConfig` object (not `import.meta.env[key]`)
+// because Vite only statically replaces direct `import.meta.env.VITE_*` access.
+const requiredConfigEntries: Array<[envKey: string, value: string | undefined]> = [
+  ['VITE_FIREBASE_API_KEY', firebaseConfig.apiKey],
+  ['VITE_FIREBASE_AUTH_DOMAIN', firebaseConfig.authDomain],
+  ['VITE_FIREBASE_PROJECT_ID', firebaseConfig.projectId],
+  ['VITE_FIREBASE_STORAGE_BUCKET', firebaseConfig.storageBucket],
+  ['VITE_FIREBASE_MESSAGING_SENDER_ID', firebaseConfig.messagingSenderId],
+  ['VITE_FIREBASE_APP_ID', firebaseConfig.appId],
+];
+
+const missingKeys = requiredConfigEntries
+  .filter(([, value]) => !value)
+  .map(([envKey]) => envKey);
 
 if (missingKeys.length > 0) {
-  console.error(
+  throw new Error(
     `Missing Firebase config: ${missingKeys.join(', ')}. ` +
-    'Copy .env.example to .env.local and fill in your Firebase project values.'
+    'Set these in the student app environment (locally in .env.local, or in ' +
+    'Vercel → Settings → Environment Variables). They must point to the same ' +
+    'Firebase project as the Cloud Functions (asia-south1). See apps/student/README.md.',
   );
 }
 

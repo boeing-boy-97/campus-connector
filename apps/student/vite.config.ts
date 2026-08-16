@@ -9,14 +9,16 @@ export default defineConfig({
     sourcemap: false,
     // Target modern browsers
     target: 'es2020',
-    // Minification
-    minify: 'terser',
-    // Chunk splitting for better caching
+    // Chunk splitting for better caching.
+    // Note: Vite 8 (Rolldown) only supports the function form of manualChunks.
     rollupOptions: {
       output: {
-        manualChunks: {
-          firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore', 'firebase/functions', 'firebase/storage'],
-          react: ['react', 'react-dom'],
+        manualChunks: (id: string) => {
+          if (id.includes('node_modules')) {
+            if (id.includes('/firebase/') || id.includes('@firebase')) return 'firebase';
+            if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) return 'react';
+          }
+          return undefined;
         },
       },
     },
