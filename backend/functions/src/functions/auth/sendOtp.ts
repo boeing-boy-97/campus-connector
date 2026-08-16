@@ -16,18 +16,65 @@ import { CollegeService } from '../../services/college.service';
 
 const log = createLogger('sendOtp');
 
-async function deliverOtp(email: string, otp: string, collegeName: string): Promise<void> {
-  // Direct SMTP configuration - prioritize environment variables for reliability
-  const smtpConfig = {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_PORT === '465', // true if port 465, false for 587
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS?.replace(/\s+/g, ''),
-    },
+interface SmtpConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  auth: {
+    user: string;
+    pass: string;
   };
+}
 
+/**
+ * Resolves SMTP configuration from every supported source, in priority order:
+ *
+ *   1. Runtime environment variables (`process.env.SMTP_*`). These are what a
+ *      deployed Cloud Function actually receives, and can be set via the
+ *      Google Cloud console → Cloud Functions → "Runtime environment variables",
+ *      via `gcloud functions deploy --set-env-vars`, or via Firebase Secrets
+ *      (`firebase functions:secrets:set SMTP_PASS`). The local emulator also
+ *      loads them from `backend/functions/.env.local`.
+ *
+ *   2. Legacy Firebase runtime config (`functions.config().smtp.*`), which is
+ *      what `firebase functions:config:set smtp.user=... smtp.pass=...` sets.
+ *      Kept for backwards compatibility with older setup guides.
+ *
+ * Note: `firebase functions:config:set` does NOT populate `process.env`, which
+ * is why the code must read `functions.config()` explicitly when env vars are
+ * absent — otherwise SMTP looks "configured" in Firebase but is invisible here.
+ */
+function resolveSmtpConfig(): SmtpConfig {
+  const env = process.env;
+
+  let legacy: Record<string, string> = {};
+  try {
+    legacy = functions.config().smtp || {};
+  } catch {
+    // functions.config() is deprecated/unavailable on some runtimes — ignore.
+    legacy = {};
+  }
+
+  const host = env.SMTP_HOST || legacy.host || 'smtp.gmail.com';
+  const portRaw = env.SMTP_PORT || legacy.port || '587';
+  const parsedPort = parseInt(portRaw, 10);
+  const user = env.SMTP_USER || legacy.user || '';
+  const pass = (env.SMTP_PASS || legacy.pass || '').replace(/\s+/g, '');
+
+  return {
+    host,
+    port: Number.isFinite(parsedPort) ? parsedPort : 587,
+    secure: String(portRaw) === '465', // true if port 465, false for 587
+    auth: { user, pass },
+  };
+}
+
+async function deliverOtp(
+  email: string,
+  otp: string,
+  collegeName: string,
+  smtpConfig: SmtpConfig
+): Promise<void> {
   // Validate SMTP credentials are present
   if (!smtpConfig.auth.user || !smtpConfig.auth.pass) {
     log.error('SMTP credentials not configured', {
@@ -136,7 +183,8 @@ export const sendOtp = functions
 
       // Send OTP via email
       try {
-        const hasSmtpConfig = Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
+        const smtpConfig = resolveSmtpConfig();
+        const hasSmtpConfig = Boolean(smtpConfig.auth.user && smtpConfig.auth.pass);
 
         if (process.env.FUNCTIONS_EMULATOR === 'true') {
           log.info(`[DEV MODE] Generated OTP for ${maskEmail(email)}: ${otp}`);
@@ -144,12 +192,14 @@ export const sendOtp = functions
 
         if (hasSmtpConfig) {
           log.info(`Attempting to send real OTP email to ${maskEmail(email)} via SMTP...`);
-          await deliverOtp(email, otp, college.name);
+          await deliverOtp(email, otp, college.name, smtpConfig);
           log.info(`✓ OTP email sent successfully to ${maskEmail(email)}`);
         } else if (process.env.FUNCTIONS_EMULATOR === 'true') {
           log.warn(`SMTP credentials not configured in .env.local — OTP for ${maskEmail(email)} is: ${otp}`);
         } else {
-          await deliverOtp(email, otp, college.name);
+          // Production without any SMTP credentials: fail loudly so the user is
+          // told the email service is misconfigured instead of silently waiting.
+          await deliverOtp(email, otp, college.name, smtpConfig);
         }
       } catch (deliveryError) {
         log.error(`✗ OTP email delivery failed for ${maskEmail(email)}:`, deliveryError);

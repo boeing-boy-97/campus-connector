@@ -328,7 +328,6 @@ export default function App() {
           ) : view === 'connections' ? (
             <ConnectionsView
               connections={activeMatches}
-              currentUserId={user.uid}
               onOpenChat={openChat}
             />
           ) : view === 'requests' ? (

@@ -46,7 +46,7 @@ export function RequestsView({ currentUserId, onRequestHandled }: RequestsViewPr
       const requests: RequestWithProfile[] = await Promise.all(
         snapshot.docs.map(async (d) => {
           const data = d.data() as ConnectRequest;
-          const req: RequestWithProfile = { id: d.id, ...data };
+          const req: RequestWithProfile = { ...data, id: d.id };
 
           // Fetch sender profile
           try {
@@ -76,7 +76,7 @@ export function RequestsView({ currentUserId, onRequestHandled }: RequestsViewPr
       const requests: RequestWithProfile[] = await Promise.all(
         snapshot.docs.map(async (d) => {
           const data = d.data() as ConnectRequest;
-          const req: RequestWithProfile = { id: d.id, ...data };
+          const req: RequestWithProfile = { ...data, id: d.id };
 
           try {
             const targetSnap = await getDoc(doc(db, 'students', data.to_id));

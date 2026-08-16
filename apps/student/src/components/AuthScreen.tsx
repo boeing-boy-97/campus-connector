@@ -1,11 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { FormEvent } from 'react';
 import {
   signInWithCustomToken,
   signInWithPopup,
-  signInWithPhoneNumber,
-  RecaptchaVerifier,
-  type ConfirmationResult,
+  signOut,
 } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../services/firebase';
@@ -14,9 +12,15 @@ import { formatErrorMessage } from '../utils/errors';
 
 const RESEND_COOLDOWN_SECONDS = 30;
 
-type AuthMethod = 'landing' | 'email' | 'phone' | 'google';
+// Module-level so an error raised during the Google flow can survive the
+// unmount/remount of AuthScreen. When the Google popup signs the user in,
+// App.tsx's onAuthStateChanged immediately swaps AuthScreen for the app shell;
+// if the backend then rejects the login we sign the user back out and re-mount
+// AuthScreen — this store lets that new mount show the reason.
+let pendingAuthError: string | null = null;
+
+type AuthMethod = 'landing' | 'email' | 'google';
 type EmailStep = 'input' | 'otp';
-type PhoneStep = 'input' | 'otp';
 
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
@@ -28,11 +32,6 @@ function maskEmail(email: string): string {
   return `${maskedLocal}@${domain}`;
 }
 
-function maskPhone(phone: string): string {
-  if (phone.length < 6) return phone;
-  return `${phone.slice(0, 3)}•••••${phone.slice(-2)}`;
-}
-
 export function AuthScreen() {
   // ── State ───────────────────────────────────────────────────────────────
   const [authMethod, setAuthMethod] = useState<AuthMethod>('landing');
@@ -40,20 +39,16 @@ export function AuthScreen() {
   const [otp, setOtp] = useState('');
   const [emailStep, setEmailStep] = useState<EmailStep>('input');
 
-  const [phoneNumber, setPhoneNumber] = useState('+91');
-  const [phoneOtp, setPhoneOtp] = useState('');
-  const [phoneStep, setPhoneStep] = useState<PhoneStep>('input');
-
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => {
+    const pending = pendingAuthError;
+    pendingAuthError = null;
+    return pending ?? '';
+  });
   const [resendTimer, setResendTimer] = useState(0);
   const [collegeName, setCollegeName] = useState('');
   const [animating, setAnimating] = useState(false);
   const [entering, setEntering] = useState(true);
-
-  const recaptchaRef = useRef<RecaptchaVerifier | null>(null);
-  const confirmationRef = useRef<ConfirmationResult | null>(null);
-  const phoneInputRef = useRef<HTMLInputElement>(null);
 
   // ── Entry animation ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -86,9 +81,7 @@ export function AuthScreen() {
 
   const goBack = useCallback(() => {
     setOtp('');
-    setPhoneOtp('');
     setEmailStep('input');
-    setPhoneStep('input');
     setError('');
     setCollegeName('');
     navigateTo('landing');
@@ -204,122 +197,50 @@ export function AuthScreen() {
       const result = await signInWithPopup(auth, provider);
       const idToken = await result.user.getIdToken();
 
-      // Link Google account with backend to verify college domain
+      // Link the Google account with the backend, which verifies the college
+      // domain and sets the student's custom claims (role, college_id,
+      // verification_status). Any failure here (unregistered domain, wrong
+      // Firebase project, function unavailable, etc.) is a real login failure
+      // and must NOT be silently swallowed.
       const linkFn = httpsCallable<
         { id_token: string },
         { success: boolean; data: { custom_token: string } }
       >(functions, 'loginWithGoogle');
 
-      // If the function doesn't exist yet, the user is still signed in via popup
-      try {
-        await linkFn({ id_token: idToken });
-      } catch {
-        // Google auth succeeded — the onAuthStateChanged in App.tsx handles the rest
-        // The backend function may not exist yet, which is fine
-      }
+      await linkFn({ id_token: idToken });
+
+      // Force-refresh the ID token so the custom claims the backend just set
+      // (role, college_id, verification_status) are present on subsequent calls.
+      await result.user.getIdToken(true);
     } catch (e: any) {
-      if (e?.code === 'auth/popup-closed-by-user') {
+      if (e?.code === 'auth/popup-closed-by-user' || e?.code === 'auth/cancelled-popup-request') {
+        // User intentionally dismissed the popup — not an error.
         setError('');
-      } else if (e?.code === 'auth/popup-blocked') {
-        setError(
-          'Pop-up was blocked by your browser. Please allow pop-ups and try again.',
-        );
       } else {
-        setError(formatErrorMessage(e));
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
+        const message = e?.code === 'auth/popup-blocked'
+          ? 'Pop-up was blocked by your browser. Please allow pop-ups and try again.'
+          : formatErrorMessage(e);
 
-  // ══════════════════════════════════════════════════════════════════════
-  //  PHONE NUMBER OTP FLOW
-  // ══════════════════════════════════════════════════════════════════════
-
-  const initRecaptcha = useCallback(() => {
-    if (recaptchaRef.current) return recaptchaRef.current;
-
-    const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-      size: 'invisible',
-      callback: () => {
-        // reCAPTCHA solved
-      },
-      'expired-callback': () => {
-        setError('Security check expired. Please try again.');
-      },
-    });
-
-    recaptchaRef.current = verifier;
-    return verifier;
-  }, []);
-
-  const handlePhoneSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    const cleaned = phoneNumber.replace(/\s/g, '');
-    if (cleaned.length < 10) {
-      setError('Please enter a valid phone number with country code.');
-      return;
-    }
-
-    setBusy(true);
-    setError('');
-    try {
-      const verifier = initRecaptcha();
-      const confirmation = await signInWithPhoneNumber(auth, cleaned, verifier);
-      confirmationRef.current = confirmation;
-      setPhoneStep('otp');
-      setResendTimer(RESEND_COOLDOWN_SECONDS);
-    } catch (e: any) {
-      if (e?.code === 'auth/invalid-phone-number') {
-        setError(
-          'Invalid phone number. Please include country code (e.g. +91 for India).',
-        );
-      } else if (e?.code === 'auth/too-many-requests') {
-        setError('Too many attempts. Please try again later.');
-      } else {
-        setError(formatErrorMessage(e));
-      }
-      // Reset reCAPTCHA on failure
-      recaptchaRef.current?.clear();
-      recaptchaRef.current = null;
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleVerifyPhoneOtp = useCallback(
-    async (otpToVerify: string) => {
-      if (otpToVerify.length !== 6 || verifying || !confirmationRef.current)
-        return;
-      setVerifying(true);
-      setBusy(true);
-      setError('');
-      try {
-        await confirmationRef.current.confirm(otpToVerify);
-        // onAuthStateChanged in App.tsx handles the rest
-      } catch (e: any) {
-        if (e?.code === 'auth/invalid-verification-code') {
-          setError('Incorrect code. Please check and try again.');
-        } else if (e?.code === 'auth/code-expired') {
-          setError('Code expired. Please request a new one.');
-        } else {
-          setError(formatErrorMessage(e));
+        // If sign-in created a Firebase user but the backend link failed, sign
+        // out so the user is never left half-authenticated with no Campus
+        // Connect account. App.tsx re-mounts AuthScreen after sign-out; store
+        // the message so that new mount can display it.
+        if (auth.currentUser) {
+          pendingAuthError = message;
+          await signOut(auth).catch(() => {});
         }
-        setBusy(false);
-        setVerifying(false);
+        setError(message);
       }
-    },
-    [verifying],
-  );
-
-  const handleResendPhoneOtp = async () => {
-    if (resendTimer > 0 || busy) return;
-    setPhoneOtp('');
-    setPhoneStep('input');
-    confirmationRef.current = null;
-    recaptchaRef.current?.clear();
-    recaptchaRef.current = null;
+    } finally {
+      setBusy(false);
+    }
   };
+
+  // NOTE: Phone-number login is intentionally disabled until a complete phone
+  // onboarding flow exists (phone verification → college identification →
+  // custom claims → student profile provisioning). Firebase phone auth alone
+  // cannot produce a Campus Connect student account, so offering it in the UI
+  // leaves users authenticated with Firebase but locked out of the app.
 
   // ══════════════════════════════════════════════════════════════════════
   //  RENDER
@@ -401,18 +322,6 @@ export function AuthScreen() {
                 <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
               </svg>
               College email
-            </button>
-
-            {/* Phone */}
-            <button
-              className="auth-btn auth-btn-phone"
-              onClick={() => navigateTo('phone')}
-            >
-              <svg className="auth-btn-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
-                <line x1="12" y1="18" x2="12.01" y2="18" />
-              </svg>
-              Phone number
             </button>
 
             {/* Stats */}
@@ -563,142 +472,6 @@ export function AuthScreen() {
                       type="button"
                       className="auth-resend-btn"
                       onClick={handleResendEmailOtp}
-                      disabled={busy}
-                    >
-                      Didn't receive it? Send again ↻
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ─── PHONE OTP FLOW ────────────────────────────────────────── */}
-        {authMethod === 'phone' && (
-          <div className="auth-flow">
-            <button
-              type="button"
-              className="auth-back-btn"
-              onClick={goBack}
-              disabled={busy}
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m15 18-6-6 6-6" />
-              </svg>
-              Back
-            </button>
-
-            <div className="auth-flow-icon">
-              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#244c43" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
-                <line x1="12" y1="18" x2="12.01" y2="18" />
-              </svg>
-            </div>
-
-            {phoneStep === 'input' ? (
-              <>
-                <h2>Sign in with phone</h2>
-                <p className="auth-flow-desc">
-                  Enter your phone number. We'll send a verification code via
-                  SMS.
-                </p>
-
-                <form onSubmit={handlePhoneSubmit} noValidate>
-                  <div className="auth-input-group">
-                    <label htmlFor="phone-input" className="auth-floating-label">
-                      Phone number
-                    </label>
-                    <input
-                      ref={phoneInputRef}
-                      id="phone-input"
-                      value={phoneNumber}
-                      onChange={(e) => {
-                        setPhoneNumber(e.target.value);
-                        if (error) setError('');
-                      }}
-                      type="tel"
-                      autoComplete="tel"
-                      placeholder="+91 98765 43210"
-                      required
-                      disabled={busy}
-                      className="auth-input"
-                      autoFocus
-                    />
-                    <span className="auth-input-hint">
-                      Include country code (e.g. +91)
-                    </span>
-                  </div>
-                  <button
-                    type="submit"
-                    className="auth-submit-btn"
-                    disabled={busy || phoneNumber.length < 10}
-                  >
-                    {busy ? (
-                      <span className="auth-btn-loading">
-                        <span className="button-spinner" /> Sending SMS…
-                      </span>
-                    ) : (
-                      'Send verification code'
-                    )}
-                  </button>
-                </form>
-
-                <div id="recaptcha-container" />
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="auth-back-text"
-                  onClick={handleResendPhoneOtp}
-                  disabled={busy}
-                >
-                  ← Change number
-                </button>
-
-                <h2>Enter verification code</h2>
-
-                <p className="auth-sent-to">
-                  Code sent to{' '}
-                  <strong>{maskPhone(phoneNumber)}</strong>
-                </p>
-
-                <div className="auth-otp-group">
-                  <label>Enter 6-digit code</label>
-                  <OtpInput
-                    value={phoneOtp}
-                    onChange={setPhoneOtp}
-                    onComplete={handleVerifyPhoneOtp}
-                    disabled={busy}
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  className="auth-submit-btn"
-                  onClick={() => handleVerifyPhoneOtp(phoneOtp)}
-                  disabled={busy || phoneOtp.length !== 6}
-                >
-                  {busy ? (
-                    <span className="auth-btn-loading">
-                      <span className="button-spinner" /> Verifying…
-                    </span>
-                  ) : (
-                    'Verify & continue'
-                  )}
-                </button>
-
-                <div className="auth-resend">
-                  {resendTimer > 0 ? (
-                    <p className="auth-resend-timer">
-                      Resend code in <strong>{resendTimer}s</strong>
-                    </p>
-                  ) : (
-                    <button
-                      type="button"
-                      className="auth-resend-btn"
-                      onClick={handleResendPhoneOtp}
                       disabled={busy}
                     >
                       Didn't receive it? Send again ↻
