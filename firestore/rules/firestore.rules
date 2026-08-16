@@ -101,9 +101,10 @@ service cloud.firestore {
 
       // Student can read their own profile (always)
       // Verified students can read OTHER verified students from SAME college only
-      // Admins can read any student
+      // Admins AND moderators can read any student (needed for the admin
+      // dashboard, users list, and verification queue enrichment)
       allow read: if isSelf(studentId)
-        || isAdmin()
+        || isModerator()
         || (isVerified()
             && sameCollege(resource.data.college_id)
             && resource.data.verification_status == 'approved');

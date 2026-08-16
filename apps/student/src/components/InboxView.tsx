@@ -17,29 +17,32 @@ interface InboxViewProps {
 }
 
 export function InboxView({ notices, onNoticesViewed }: InboxViewProps) {
-  const unreadNotices = notices.filter((n) => !n.is_read);
+  const unreadKey = notices
+    .filter((n) => !n.is_read)
+    .map((n) => n.id)
+    .join(',');
 
-  // Auto-mark notifications as read when viewed
+  // Auto-mark notifications as read when viewed.
+  // Depend on the actual unread IDs rather than notices.length so a read-state
+  // change or a replacement notification is handled correctly.
   useEffect(() => {
-    if (unreadNotices.length === 0) return;
+    const unreadIds = unreadKey ? unreadKey.split(',') : [];
+    if (unreadIds.length === 0) return;
 
     const markRead = async () => {
       try {
         const markReadFn = httpsCallable(functions, 'markNotificationsRead');
-        await markReadFn({
-          notification_ids: unreadNotices.map((n) => n.id),
-        });
+        await markReadFn({ notification_ids: unreadIds });
         onNoticesViewed?.();
       } catch {
         // Silent fail — not critical
       }
     };
 
-    // Delay slightly so the user actually sees the unread state
+    // Delay slightly so the user actually sees the unread state.
     const timer = setTimeout(markRead, 2000);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notices.length]);
+  }, [unreadKey, onNoticesViewed]);
 
   const formatTimestamp = (ts: unknown): string => {
     if (!ts) return '';
