@@ -22,7 +22,7 @@
     "deploy:rules": "firebase deploy --only firestore:rules,storage:rules",
     "deploy:admin": "firebase deploy --only hosting",
     "test:functions": "cd backend/functions && npm test",
-    "test:rules": "firebase emulators:exec --only firestore,storage 'cd backend/functions && npm run test:rules'",
+    "test:rules": "echo \"No Firestore rules tests defined yet — see https://firebase.google.com/docs/rules/unit-tests\"",
     "lint:student": "npm --prefix apps/student run lint",
     "lint": "npm --prefix apps/admin run lint && npm --prefix backend/functions run lint && npm run lint:student",
     "seed": "cd scripts/seed-data && npx ts-node seed.ts"

@@ -185,8 +185,8 @@ cd apps/mobile && flutter test
 # Cloud Functions tests
 cd backend/functions && npm test
 
-# Firestore rules tests
-firebase emulators:exec --only firestore "npm run test:rules"
+# Firestore rules tests — none defined yet
+# (see https://firebase.google.com/docs/rules/unit-tests to add them)
 ```
 
 ---

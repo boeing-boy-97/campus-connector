@@ -61,10 +61,14 @@ const callFunction = async <T,>(name: string, data?: object): Promise<{ data: T 
 
 export default function App() {
   // If Firebase config is missing, render a helpful error instead of blank screen.
+  // Kept outside `AppMain` so React hooks never run conditionally (rules-of-hooks).
   if (firebaseConfigError) {
     return <ConfigErrorScreen error={firebaseConfigError} />;
   }
+  return <AppMain />;
+}
 
+function AppMain() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [view, setView] = useState<View>('discover');

@@ -13,8 +13,9 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-// Validate required config
-const missingKeys = Object.entries(firebaseConfig)
+// Validate required config (measurementId is optional — Analytics only)
+const { measurementId: _measurementId, ...requiredConfig } = firebaseConfig;
+const missingKeys = Object.entries(requiredConfig)
   .filter(([, v]) => !v)
   .map(([k]) => k);
 
