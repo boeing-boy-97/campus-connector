@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build",
+  "buildCommand": "if [ -d apps ]; then (cd apps/student && npm run build) && mkdir -p dist && cp -r apps/student/dist/. dist/; else npm run build; fi",
   "outputDirectory": "dist",
   "framework": "vite",
   "rewrites": [
