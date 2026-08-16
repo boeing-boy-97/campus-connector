@@ -1,32 +1,20 @@
-import type { ReactNode } from 'react';
+import React from 'react';
 
-export type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral' | 'primary';
+export type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 
-export interface BadgeProps {
-  children: ReactNode;
+interface BadgeProps {
+  children: React.ReactNode;
   variant?: BadgeVariant;
 }
 
-export function Badge({ children, variant = 'neutral' }: BadgeProps) {
-  return <span className={`badge badge-${variant}`}>{children}</span>;
-}
+export const Badge: React.FC<BadgeProps> = ({ children, variant = 'neutral' }) => {
+  const variantClasses: Record<BadgeVariant, string> = {
+    success: 'badge-success',
+    warning: 'badge-warning',
+    danger: 'badge-danger',
+    info: 'badge-info',
+    neutral: 'badge-neutral',
+  };
 
-/** Maps a student verification status to its badge variant. */
-export const STATUS_VARIANTS: Record<string, BadgeVariant> = {
-  approved: 'success',
-  pending: 'warning',
-  rejected: 'danger',
-  suspended: 'danger',
-  deleted: 'neutral',
+  return <span className={`badge ${variantClasses[variant]}`}>{children}</span>;
 };
-
-/** Renders a verification/approval status as a badge. */
-export function StatusBadge({ status }: { status: string }) {
-  return (
-    <Badge variant={STATUS_VARIANTS[status] ?? 'neutral'}>
-      {status.charAt(0).toUpperCase() + status.slice(1)}
-    </Badge>
-  );
-}
-
-export default Badge;

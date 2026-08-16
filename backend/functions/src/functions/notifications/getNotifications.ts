@@ -2,7 +2,7 @@
 // ║  notifications/getNotifications.ts — Fetch user notifications            ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 import { z } from 'zod';
 import { db } from '../../config/firebase';
 import { requireAuth } from '../../middleware/auth.middleware';

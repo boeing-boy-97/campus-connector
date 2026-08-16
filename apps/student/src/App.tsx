@@ -1,470 +1,269 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  BrowserRouter,
-  Navigate,
-  NavLink,
-  Route,
-  Routes,
-  useLocation,
-} from 'react-router-dom';
-import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
-import {
-  collection,
-  doc,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  where,
-} from 'firebase/firestore';
-import { auth, db } from './services/firebase';
-import { api, clearProfileCache, errorMessage } from './services/api';
-import { Icon, type IconName } from './components/Icon';
-import { Splash } from './components/states';
-import { ToastProvider } from './components/Toast';
-import { useToast } from './lib/toast';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import type { User } from 'firebase/auth';
+import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from './services/firebase';
+import { AuthScreen } from './components/AuthScreen';
+import { Verification } from './components/Verification';
+import type { StudentProfile } from './components/Verification';
+import { DiscoverView } from './components/DiscoverView';
+import { ConnectionsView } from './components/ConnectionsView';
+import type { MatchItem } from './components/ConnectionsView';
+import { InboxView } from './components/InboxView';
+import type { NoticeItem } from './components/InboxView';
+import { ProfileView } from './components/ProfileView';
 import { Avatar } from './components/Avatar';
-import { AuthScreen } from './pages/AuthScreen';
-import { Onboarding } from './pages/Onboarding';
-import { Discover } from './pages/Discover';
-import { Connections } from './pages/Connections';
-import { Inbox } from './pages/Inbox';
-import { Chat } from './pages/Chat';
-import { NotFound, Profile } from './pages/Profile';
-import type {
-  AppNotification,
-  CollegeBranding,
-  ConnectRequest,
-  Match,
-  MatchWithPeer,
-  Student,
-} from './types';
 
-const NAV: Array<{ to: string; label: string; icon: IconName; badge?: 'requests' | 'unread' }> = [
-  { to: '/discover', label: 'Discover', icon: 'discover' },
-  { to: '/connections', label: 'Connections', icon: 'connections', badge: 'unread' },
-  { to: '/inbox', label: 'Inbox', icon: 'inbox', badge: 'requests' },
-  { to: '/profile', label: 'Profile', icon: 'profile' },
+type View = 'discover' | 'connections' | 'inbox' | 'profile';
+
+const NAV_ITEMS: { id: View; label: string; icon: string }[] = [
+  { id: 'discover', label: 'Discover', icon: '⌕' },
+  { id: 'connections', label: 'Connect', icon: '♧' },
+  { id: 'inbox', label: 'Inbox', icon: '◌' },
+  { id: 'profile', label: 'Profile', icon: '◉' },
 ];
 
-/** Scrolls to the top on navigation so a new page never starts mid-scroll. */
-function ScrollToTop() {
-  const { pathname } = useLocation();
-  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
-  return null;
-}
+const callFunction = async <T,>(name: string, data?: object): Promise<{ data: T }> => {
+  const callable = httpsCallable<object, { success: boolean; data: T }>(functions, name);
+  const res = await callable(data ?? {});
+  return { data: res.data.data };
+};
 
-interface SessionData {
-  profile: Student | null;
-  profileLoaded: boolean;
-  branding: CollegeBranding | null;
-  matches: MatchWithPeer[];
-  requests: ConnectRequest[];
-  notifications: AppNotification[];
-  dataLoading: boolean;
-}
+export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [view, setView] = useState<View>('discover');
+  const [profile, setProfile] = useState<StudentProfile | null>(null);
+  const [cards, setCards] = useState<StudentProfile[]>([]);
+  const [matches, setMatches] = useState<MatchItem[]>([]);
+  const [notices, setNotices] = useState<NoticeItem[]>([]);
+  const [cardsLoading, setCardsLoading] = useState(false);
+  const [toast, setToast] = useState('');
 
-/**
- * Owns every realtime subscription for a signed-in, verified student.
- *
- * Matches use a single `participant_ids array-contains` listener; the original
- * code ran two listeners (`student_a_id` and `student_b_id`) and merged them,
- * doubling the read cost. A fallback pair of listeners covers documents written
- * before `participant_ids` existed.
- */
-function useSession(user: User | null): SessionData & { refreshRequests: (id: string) => void } {
-  const toast = useToast();
-  const [profile, setProfile] = useState<Student | null>(null);
-  const [profileLoaded, setProfileLoaded] = useState(false);
-  const [branding, setBranding] = useState<CollegeBranding | null>(null);
-  const [verified, setVerified] = useState(false);
-  const [matches, setMatches] = useState<Match[]>([]);
-  const [requests, setRequests] = useState<ConnectRequest[]>([]);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [dataLoading, setDataLoading] = useState(true);
-  const loginCalled = useRef('');
+  // Fetch student profile
+  const fetchProfile = useCallback(async () => {
+    try {
+      const result = await callFunction<StudentProfile>('getProfile');
+      setProfile(result?.data ?? null);
+    } catch {
+      setProfile(null);
+    }
+  }, []);
 
-  // Reset all session state when the user changes (sign-in or sign-out).
+  // Listen to Auth State changes
   useEffect(() => {
-    setProfile(null);
-    setProfileLoaded(false);
-    setBranding(null);
-    setVerified(false);
-    setMatches([]);
-    setRequests([]);
-    setNotifications([]);
-    setDataLoading(true);
-    loginCalled.current = '';
-    clearProfileCache();
-  }, [user?.uid]);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        await fetchProfile();
+      } else {
+        setProfile(null);
+        setCards([]);
+        setMatches([]);
+        setNotices([]);
+      }
+      setAuthLoading(false);
+    });
 
-  // Own profile — realtime so admin verification decisions appear instantly.
+    return () => unsubscribe();
+  }, [fetchProfile]);
+
+  // Real-time Firestore subscriptions for matches and notifications
   useEffect(() => {
     if (!user) return;
-    return onSnapshot(
-      doc(db, 'students', user.uid),
+
+    const matchesQuery = query(collection(db, 'matches'), where('student_a_id', '==', user.uid));
+    const unsubMatches = onSnapshot(
+      matchesQuery,
       (snapshot) => {
-        setProfile(snapshot.exists() ? ({ id: snapshot.id, ...snapshot.data() } as Student) : null);
-        setProfileLoaded(true);
+        setMatches(
+          snapshot.docs.map((docSnap) => ({
+            id: docSnap.id,
+            ...(docSnap.data() as Omit<MatchItem, 'id' | 'otherId'>),
+            otherId: docSnap.data().student_b_id,
+          }))
+        );
       },
       (error) => {
-        setProfileLoaded(true);
-        toast.error(errorMessage(error, 'We could not load your profile.'));
-      },
-    );
-  }, [user, toast]);
-
-  const verificationStatus = profile?.verification_status;
-
-  // Refresh the ID token once approved so the new custom claims (which gate
-  // every verified-only callable and Storage rule) are present.
-  useEffect(() => {
-    let active = true;
-    if (!user || verificationStatus !== 'approved') {
-      setVerified(false);
-      return;
-    }
-
-    void user.getIdToken(true)
-      .then(() => { if (active) setVerified(true); })
-      .catch((error) => toast.error(errorMessage(error, 'We could not refresh your session.')));
-
-    return () => { active = false; };
-  }, [user, verificationStatus, toast]);
-
-  // Session bootstrap: records presence and returns college branding.
-  useEffect(() => {
-    if (!user || !verified || loginCalled.current === user.uid) return;
-    loginCalled.current = user.uid;
-
-    void api.login()
-      .then((payload) => setBranding(payload.branding))
-      // Branding is decorative; a failure must not block the app.
-      .catch(() => undefined);
-  }, [user, verified]);
-
-  // Matches, requests and notifications.
-  useEffect(() => {
-    if (!user || !verified) return;
-
-    const uid = user.uid;
-    let settled = 0;
-    const markSettled = () => {
-      settled += 1;
-      if (settled >= 3) setDataLoading(false);
-    };
-
-    const buckets: Record<'current' | 'legacyA' | 'legacyB', Match[]> = {
-      current: [], legacyA: [], legacyB: [],
-    };
-    const emitMatches = () => {
-      const unique = new Map<string, Match>();
-      [...buckets.current, ...buckets.legacyA, ...buckets.legacyB]
-        .forEach((match) => unique.set(match.id, match));
-      setMatches([...unique.values()]);
-    };
-    const readMatches = (snapshot: { docs: Array<{ id: string; data: () => object }> }) =>
-      snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as Match));
-
-    const onMatchError = (error: Error) =>
-      toast.error(errorMessage(error, 'We could not load your connections.'));
-
-    const unsubCurrent = onSnapshot(
-      query(collection(db, 'matches'), where('participant_ids', 'array-contains', uid)),
-      (snapshot) => { buckets.current = readMatches(snapshot); emitMatches(); markSettled(); },
-      (error) => { onMatchError(error); markSettled(); },
+        console.warn('Matches snapshot error:', error);
+      }
     );
 
-    // Legacy fallback for matches created before `participant_ids` was written.
-    const unsubLegacyA = onSnapshot(
-      query(collection(db, 'matches'), where('student_a_id', '==', uid)),
-      (snapshot) => { buckets.legacyA = readMatches(snapshot); emitMatches(); },
-      () => undefined,
+    const noticesQuery = query(
+      collection(db, 'notifications'),
+      where('user_id', '==', user.uid),
+      orderBy('created_at', 'desc'),
+      limit(20)
     );
-    const unsubLegacyB = onSnapshot(
-      query(collection(db, 'matches'), where('student_b_id', '==', uid)),
-      (snapshot) => { buckets.legacyB = readMatches(snapshot); emitMatches(); },
-      () => undefined,
-    );
-
-    const unsubRequests = onSnapshot(
-      query(
-        collection(db, 'connect_requests'),
-        where('to_id', '==', uid),
-        where('status', '==', 'pending'),
-        orderBy('created_at', 'desc'),
-      ),
+    const unsubNotices = onSnapshot(
+      noticesQuery,
       (snapshot) => {
-        setRequests(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as ConnectRequest)));
-        markSettled();
+        setNotices(
+          snapshot.docs.map((docSnap) => ({
+            id: docSnap.id,
+            ...(docSnap.data() as Omit<NoticeItem, 'id'>),
+          }))
+        );
       },
       (error) => {
-        toast.error(errorMessage(error, 'We could not load connection requests.'));
-        markSettled();
-      },
-    );
-
-    const unsubNotifications = onSnapshot(
-      query(
-        collection(db, 'notifications'),
-        where('user_id', '==', uid),
-        orderBy('created_at', 'desc'),
-        limit(30),
-      ),
-      (snapshot) => {
-        setNotifications(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as AppNotification)));
-        markSettled();
-      },
-      (error) => {
-        toast.error(errorMessage(error, 'We could not load notifications.'));
-        markSettled();
-      },
+        console.warn('Notifications snapshot error:', error);
+      }
     );
 
     return () => {
-      unsubCurrent();
-      unsubLegacyA();
-      unsubLegacyB();
-      unsubRequests();
-      unsubNotifications();
+      unsubMatches();
+      unsubNotices();
     };
-  }, [user, verified, toast]);
+  }, [user]);
 
-  // Only active matches are actionable; attach the peer ID and unread counter.
-  const activeMatches = useMemo<MatchWithPeer[]>(() => {
-    if (!user) return [];
-    return matches
-      .filter((match) => match.status === 'active')
-      .map((match) => ({
-        ...match,
-        peerId: match.student_a_id === user.uid ? match.student_b_id : match.student_a_id,
-        unreadCount: Number(match[`unread_count_${user.uid}`] ?? 0) || 0,
-      }));
-  }, [matches, user]);
-
-  // Optimistically drop a request the user just answered, so the row disappears
-  // immediately instead of waiting for the snapshot round-trip.
-  const refreshRequests = useCallback((requestId: string) => {
-    setRequests((current) => current.filter((request) => request.id !== requestId));
-  }, []);
-
-  return {
-    profile,
-    profileLoaded,
-    branding,
-    matches: activeMatches,
-    requests,
-    notifications,
-    dataLoading: dataLoading && verified,
-    refreshRequests,
-  };
-}
-
-/** Signed-in application shell with navigation. */
-function AppShell({ user }: { user: User }) {
-  const toast = useToast();
-  const session = useSession(user);
-  const {
-    profile, profileLoaded, branding, matches, requests, notifications, dataLoading,
-  } = session;
-
-  const unreadNotifications = notifications.filter((item) => !item.is_read).length;
-  const unreadMessages = matches.reduce((sum, match) => sum + match.unreadCount, 0);
-  const badgeCounts = { requests: requests.length, unread: unreadMessages };
-
-  const location = useLocation();
-  const markedRef = useRef(false);
-
-  // Mark notifications read when the inbox is open, once per set of unread IDs.
-  useEffect(() => {
-    if (location.pathname !== '/inbox') {
-      markedRef.current = false;
-      return;
+  // Fetch discovery recommendations
+  const getRecommendations = useCallback(async () => {
+    if (!user || profile?.verification_status !== 'approved') return;
+    setCardsLoading(true);
+    try {
+      const res = await callFunction<{ recommendations?: StudentProfile[]; students?: StudentProfile[] }>(
+        'getRecommendations',
+        { page_size: 20 }
+      );
+      setCards(res.data.recommendations ?? res.data.students ?? []);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not load recommendations.';
+      setToast(msg);
+    } finally {
+      setCardsLoading(false);
     }
-    if (markedRef.current || unreadNotifications === 0) return;
+  }, [user, profile?.verification_status]);
 
-    markedRef.current = true;
-    void api.markNotificationsRead().catch(() => { markedRef.current = false; });
-  }, [location.pathname, unreadNotifications]);
+  useEffect(() => {
+    if (user && profile?.verification_status === 'approved') {
+      void getRecommendations();
+    }
+  }, [user, profile?.verification_status, getRecommendations]);
 
-  const handleSignOut = () => {
-    clearProfileCache();
-    void signOut(auth).catch((error) => {
-      toast.error(errorMessage(error, 'We could not sign you out.'));
-    });
+  // Send connection request
+  const handleConnect = async (student: StudentProfile) => {
+    try {
+      await callFunction('sendConnectRequest', {
+        to_id: student.id,
+        match_type: 'friendship',
+      });
+      setCards((current) => current.filter((x) => x.id !== student.id));
+      setToast(`Connection request sent to ${student.full_name}.`);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'Could not send connection request.');
+    }
   };
 
-  if (!profileLoaded) return <Splash message="Loading your profile" />;
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      setProfile(null);
+      setUser(null);
+      setView('discover');
+    } catch (e) {
+      console.error('Sign out error:', e);
+    }
+  };
 
-  const approved = profile?.verification_status === 'approved';
+  const activeMatches = useMemo(() => matches.filter((x) => x.status === 'active'), [matches]);
+  const unreadCount = useMemo(() => notices.filter((x) => !x.is_read).length, [notices]);
+
+  // Initial loading splash screen (prevents flickering)
+  if (authLoading) {
+    return (
+      <div className="splash">
+        <div className="brand-mark">C</div>
+      </div>
+    );
+  }
+
+  // Guest route
+  if (!user) {
+    return <AuthScreen />;
+  }
+
+  const isProfileIncomplete = !profile || profile.verification_status !== 'approved';
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <NavLink className="wordmark" to={approved ? '/discover' : '/'} aria-label="Campus Connector home">
-          <b>campus</b><i>connector</i>
-        </NavLink>
+        <button className="wordmark" onClick={() => setView('discover')} aria-label="Campus Connect home">
+          <b>campus</b><i>connect</i>
+        </button>
 
-        <div className="topbar-actions">
-          {branding && (
-            <span className="college-chip" title={branding.name}>
-              <span className="status-dot" aria-hidden="true" />
-              {branding.short_name || branding.name}
-            </span>
-          )}
-
-          {approved && (
-            <NavLink className="icon-button" to="/inbox" aria-label={`Inbox${unreadNotifications ? `, ${unreadNotifications} unread` : ''}`}>
-              <Icon name="bell" size={20} />
-              {unreadNotifications > 0 && (
-                <span className="count">{unreadNotifications > 9 ? '9+' : unreadNotifications}</span>
-              )}
-            </NavLink>
-          )}
-
-          {approved && (
-            <NavLink to="/profile" aria-label="Your profile">
-              <Avatar student={profile ?? undefined} size="small" />
-            </NavLink>
-          )}
-
-          {/* Sign-out must be reachable on every breakpoint. The original app
-              placed it only in the desktop sidebar, which is hidden on mobile —
-              leaving mobile users with no way to sign out. */}
+        <div className="top-actions">
           <button
-            type="button"
             className="icon-button"
-            onClick={handleSignOut}
-            aria-label="Sign out"
-            title="Sign out"
+            aria-label="Notifications"
+            onClick={() => setView('inbox')}
           >
-            <Icon name="logout" size={19} />
+            ♢{unreadCount > 0 && <sup>{unreadCount}</sup>}
           </button>
+          <Avatar student={profile ?? undefined} size="small" />
         </div>
       </header>
 
-      <div className="shell-body">
-        {approved && (
-          <nav className="sidebar" aria-label="Main navigation">
-            <p className="nav-label">Verified campus</p>
-            {NAV.map((item) => {
-              const count = item.badge ? badgeCounts[item.badge] : 0;
-              return (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
-                >
-                  <Icon name={item.icon} size={19} />
-                  <span>{item.label}</span>
-                  {count > 0 && <span className="count">{count > 9 ? '9+' : count}</span>}
-                </NavLink>
-              );
-            })}
-            <div className="sidebar-foot">
-              <button type="button" className="nav-item" onClick={handleSignOut}>
-                <Icon name="logout" size={19} />
-                <span>Sign out</span>
-              </button>
-            </div>
-          </nav>
-        )}
+      <aside className="sidebar">
+        <div className="college-pill">
+          <span className="status-dot" /> VERIFIED CAMPUS
+        </div>
 
-        <main className="content" id="main">
-          {!approved ? (
-            <Routes>
-              <Route
-                path="*"
-                element={
-                  <Onboarding
-                    profile={profile}
-                    onProfileCreated={() => toast.success('Profile saved. One step to go.')}
-                  />
-                }
-              />
-            </Routes>
-          ) : (
-            <Routes>
-              <Route path="/" element={<Navigate to="/discover" replace />} />
-              <Route path="/discover" element={<Discover profile={profile as Student} />} />
-              <Route
-                path="/connections"
-                element={<Connections matches={matches} loading={dataLoading} />}
-              />
-              <Route
-                path="/inbox"
-                element={
-                  <Inbox
-                    requests={requests}
-                    notifications={notifications}
-                    loading={dataLoading}
-                    onResponded={session.refreshRequests}
-                  />
-                }
-              />
-              <Route
-                path="/chat/:matchId"
-                element={
-                  <Chat
-                    matches={matches}
-                    currentUserId={user.uid}
-                    matchesLoading={dataLoading}
-                  />
-                }
-              />
-              <Route
-                path="/profile"
-                element={<Profile profile={profile as Student} branding={branding} />}
-              />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          )}
-        </main>
-      </div>
-
-      {approved && (
-        <nav className="mobile-nav" aria-label="Main navigation">
-          {NAV.map((item) => {
-            const count = item.badge ? badgeCounts[item.badge] : 0;
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) => (isActive ? 'is-active' : undefined)}
-              >
-                <Icon name={item.icon} size={21} />
-                <span>{item.label}</span>
-                {count > 0 && <span className="count">{count > 9 ? '9+' : count}</span>}
-              </NavLink>
-            );
-          })}
+        <nav>
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              className={view === item.id ? 'active' : ''}
+              onClick={() => setView(item.id)}
+            >
+              <span>{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
         </nav>
+
+        <button className="signout" onClick={handleSignOut}>
+          Sign out
+        </button>
+      </aside>
+
+      <main className="content">
+        {isProfileIncomplete ? (
+          <Verification profile={profile} onProfileUpdated={fetchProfile} />
+        ) : view === 'discover' ? (
+          <DiscoverView
+            cards={cards}
+            refresh={getRecommendations}
+            onConnect={handleConnect}
+            loading={cardsLoading}
+          />
+        ) : view === 'connections' ? (
+          <ConnectionsView connections={activeMatches} />
+        ) : view === 'inbox' ? (
+          <InboxView notices={notices} />
+        ) : (
+          <ProfileView profile={profile} />
+        )}
+      </main>
+
+      <nav className="mobile-nav">
+        {NAV_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            className={view === item.id ? 'active' : ''}
+            onClick={() => setView(item.id)}
+          >
+            <span>{item.icon}</span>
+            <small>{item.label}</small>
+          </button>
+        ))}
+      </nav>
+
+      {toast && (
+        <button className="toast" onClick={() => setToast('')}>
+          {toast} ×
+        </button>
       )}
     </div>
-  );
-}
-
-function Root() {
-  const [user, setUser] = useState<User | null>(null);
-  const [resolved, setResolved] = useState(false);
-
-  useEffect(() => onAuthStateChanged(auth, (currentUser) => {
-    setUser(currentUser);
-    setResolved(true);
-  }), []);
-
-  if (!resolved) return <Splash />;
-  if (!user) return <AuthScreen />;
-  return <AppShell user={user} />;
-}
-
-export default function App() {
-  return (
-    <BrowserRouter>
-      <ToastProvider>
-        <ScrollToTop />
-        <Root />
-      </ToastProvider>
-    </BrowserRouter>
   );
 }

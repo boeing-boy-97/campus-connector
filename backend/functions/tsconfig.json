@@ -8,9 +8,7 @@
     "outDir": "lib",
     "sourceMap": true,
     "strict": true,
-    "target": "es2022",
-    "lib": ["es2022", "dom"],
-    "types": ["node"],
+    "target": "es2020",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
@@ -32,8 +30,6 @@
   ],
   "exclude": [
     "lib",
-    "node_modules",
-    "src/test/**/*",
-    "**/*.test.ts"
+    "node_modules"
   ]
 }

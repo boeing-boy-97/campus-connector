@@ -1,26 +1,21 @@
-import { usePhotoUrl } from '../lib/usePhotoUrl';
-import { initials } from '../lib/format';
-import type { StudentPublicProfile } from '../types';
+import type { StudentProfile } from './Verification';
 
-export interface AvatarProps {
-  student?: Partial<StudentPublicProfile>;
-  size?: 'small' | 'normal' | 'large' | 'xlarge';
-  /** Shows an online/verified indicator dot. */
-  badge?: boolean;
+interface AvatarProps {
+  student?: Partial<StudentProfile>;
+  size?: 'small' | 'normal' | 'large';
 }
 
-export function Avatar({ student, size = 'normal', badge = false }: AvatarProps) {
-  const url = usePhotoUrl(student?.profile_photos?.[0]);
-  const name = student?.full_name;
+export function Avatar({ student, size = 'normal' }: AvatarProps) {
+  const photo = student?.profile_photos?.[0];
+  const initial = student?.full_name?.trim().slice(0, 1).toUpperCase() || '?';
 
   return (
-    <span className={`avatar ${size}`}>
-      {url ? (
-        <img src={url} alt="" loading="lazy" decoding="async" />
+    <div className={`avatar ${size}`}>
+      {photo ? (
+        <img src={photo} alt={student?.full_name || 'Student avatar'} />
       ) : (
-        <span aria-hidden="true">{initials(name)}</span>
+        <span>{initial}</span>
       )}
-      {badge && <span className="avatar-badge" aria-hidden="true" />}
-    </span>
+    </div>
   );
 }

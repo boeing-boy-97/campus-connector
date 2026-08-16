@@ -2,7 +2,7 @@
 // ║  createProfile.ts — Student profile creation                            ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 import { z } from 'zod';
 import { db, FieldValue, Timestamp } from '../../config/firebase';
 import { requireCollegeLinked } from '../../middleware/auth.middleware';
@@ -10,7 +10,8 @@ import { validate } from '../../middleware/validate.middleware';
 import { handleUnknownError, Errors } from '../../utils/errors';
 import { createLogger } from '../../utils/logger';
 import { COLLECTIONS, BUSINESS_RULES } from '../../../../../shared/constants';
-import { Gender, VerificationStatus } from '../../../../../shared/enums';
+import { Gender, MatchType, VerificationStatus } from '../../../../../shared/enums';
+import { StudentService } from '../../services/student.service';
 
 const log = createLogger('createProfile');
 
@@ -40,6 +41,21 @@ const createProfileSchema = z.object({
   fcm_token: z.string().optional(),
 });
 
+function parseDateOfBirth(value: string): Date {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw Errors.invalidArgument('Invalid date of birth.');
+  }
+
+  return date;
+}
+
 export const createProfile = functions
   .region('asia-south1')
   .runWith({ memory: '256MB', timeoutSeconds: 60 })
@@ -49,11 +65,12 @@ export const createProfile = functions
       const parsed = validate(createProfileSchema, data);
 
       // Age validation (18+)
-      const dob = new Date(parsed.date_of_birth);
-      const ageMs = Date.now() - dob.getTime();
-      const ageYears = ageMs / (1000 * 60 * 60 * 24 * 365.25);
+      const dob = parseDateOfBirth(parsed.date_of_birth);
+      const today = new Date();
+      const age = today.getUTCFullYear() - dob.getUTCFullYear()
+        - (Number(`${today.getUTCMonth() + 1}${today.getUTCDate()}`) < Number(`${dob.getUTCMonth() + 1}${dob.getUTCDate()}`) ? 1 : 0);
 
-      if (ageYears < BUSINESS_RULES.MIN_AGE) {
+      if (age < BUSINESS_RULES.MIN_AGE) {
         throw Errors.preconditionFailed(
           `You must be at least ${BUSINESS_RULES.MIN_AGE} years old to use Campus Connect.`
         );

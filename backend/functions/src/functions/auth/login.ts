@@ -2,14 +2,17 @@
 // ║  login.ts — Session refresh on app launch                               ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 import { db, FieldValue } from '../../config/firebase';
 import { requireAuth } from '../../middleware/auth.middleware';
-import { handleUnknownError } from '../../utils/errors';
+import { handleUnknownError, Errors } from '../../utils/errors';
+import { createLogger } from '../../utils/logger';
 import { COLLECTIONS } from '../../../../../shared/constants';
 import { StudentService } from '../../services/student.service';
 import { CollegeService } from '../../services/college.service';
+import { VerificationStatus } from '../../../../../shared/enums';
 
+const log = createLogger('login');
 
 export const login = functions
   .region('asia-south1')

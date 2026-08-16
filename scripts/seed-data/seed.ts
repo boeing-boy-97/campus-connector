@@ -1,36 +1,20 @@
 /**
- * Campus Connect — development seed data.
+ * Campus Connect — Seed Data Script
+ * Seeds Firestore with sample colleges and test data for development
  *
- * Usage:  npm run seed          (with the emulator suite running)
- *
- * SAFETY: this script refuses to run unless the Firestore emulator host is set.
- * It writes verified student profiles and approved colleges directly, bypassing
- * every validation path, so running it against a real project would inject
- * unverifiable accounts into production data.
+ * Usage: npx ts-node seed.ts
+ * Requires: GOOGLE_APPLICATION_CREDENTIALS env var or Firebase emulator running
  */
 
-import * as admin from 'firebase-admin';
+import { initializeApp } from 'firebase-admin/app';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 
-// Default to the local emulator rather than a real project.
-process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
-process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
+// Run against emulator by default
+process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'localhost:8080';
+process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 
-const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
-const isLocalEmulator = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\]):\d+$/.test(emulatorHost);
-
-if (!isLocalEmulator) {
-  console.error(
-    '❌ Refusing to seed: FIRESTORE_EMULATOR_HOST is not a local emulator ' +
-    `(got "${emulatorHost}").\n` +
-    '   This script writes pre-verified accounts and would corrupt real data.\n' +
-    '   Start the emulators first:  npm run emulator'
-  );
-  process.exit(1);
-}
-
-const projectId = process.env.GCLOUD_PROJECT || 'campus-connect-dev';
-admin.initializeApp({ projectId });
-const db = admin.firestore();
+initializeApp({ projectId: process.env.FIREBASE_PROJECT_ID || 'campus-connectt' });
+const db = getFirestore();
 
 // ── Seed Data ─────────────────────────────────────────────────────────────────
 
@@ -38,7 +22,7 @@ const colleges = [
   {
     name: 'JD College of Engineering and Management',
     short_name: 'JD College',
-    domain: 'jdcollege.edu.in',
+    domain: 'jdcoem.ac.in',
     logo_url: 'https://firebasestorage.googleapis.com/placeholder/jd-college-logo.png',
     primary_color: '#1A237E',
     secondary_color: '#E91E63',
@@ -71,6 +55,30 @@ const colleges = [
     verified_status: 'pending',
     student_count: 1000,
   },
+  {
+    name: 'Campus Connect Test College (Dev)',
+    short_name: 'Test College',
+    domain: 'gmail.com',
+    logo_url: '',
+    primary_color: '#244C43',
+    secondary_color: '#D8EE6C',
+    city: 'Dev',
+    state: 'Dev',
+    verified_status: 'approved',
+    student_count: 9999,
+  },
+  {
+    name: 'Universal College (Dev)',
+    short_name: 'Universal College',
+    domain: 'college.edu',
+    logo_url: '',
+    primary_color: '#244C43',
+    secondary_color: '#D8EE6C',
+    city: 'Dev',
+    state: 'Dev',
+    verified_status: 'approved',
+    student_count: 9999,
+  },
 ];
 
 const branches = ['Computer Science', 'Information Technology', 'Electronics', 'Mechanical', 'Civil', 'Electrical'];
@@ -83,7 +91,7 @@ async function seedColleges() {
   for (const college of colleges) {
     const docRef = await db.collection('colleges').add({
       ...college,
-      created_at: admin.firestore.FieldValue.serverTimestamp(),
+      created_at: FieldValue.serverTimestamp(),
     });
     collegeIds[college.domain] = docRef.id;
     console.log(`  ✅ ${college.short_name}: ${docRef.id}`);
@@ -95,13 +103,13 @@ async function seedColleges() {
 async function seedStudents(collegeIds: Record<string, string>) {
   console.log('👥 Seeding test students...');
 
-  const jdCollegeId = collegeIds['jdcollege.edu.in'];
+  const jdCollegeId = collegeIds['jdcoem.ac.in'];
   if (!jdCollegeId) return;
 
   const testStudents = [
     {
       full_name: 'Aarav Sharma',
-      college_email: 'aarav.sharma@jdcollege.edu.in',
+      college_email: 'aarav.sharma@jdcoem.ac.in',
       college_id: jdCollegeId,
       branch: 'Computer Science',
       year: 3,
@@ -116,7 +124,7 @@ async function seedStudents(collegeIds: Record<string, string>) {
     },
     {
       full_name: 'Priya Patel',
-      college_email: 'priya.patel@jdcollege.edu.in',
+      college_email: 'priya.patel@jdcoem.ac.in',
       college_id: jdCollegeId,
       branch: 'Information Technology',
       year: 2,
@@ -131,7 +139,7 @@ async function seedStudents(collegeIds: Record<string, string>) {
     },
     {
       full_name: 'Rohan Desai',
-      college_email: 'rohan.desai@jdcollege.edu.in',
+      college_email: 'rohan.desai@jdcoem.ac.in',
       college_id: jdCollegeId,
       branch: 'Electronics',
       year: 4,
@@ -147,15 +155,15 @@ async function seedStudents(collegeIds: Record<string, string>) {
   ];
 
   for (const student of testStudents) {
-    const uid = `test_${student.full_name.toLowerCase().replace(/\s+/g, '_')}`;
+    const uid = `test_${student.full_name.toLowerCase().replace(' ', '_')}`;
     await db.collection('students').doc(uid).set({
       ...student,
       id: uid,
-      date_of_birth: admin.firestore.Timestamp.fromDate(new Date('2002-06-15')),
-      consent_given_at: admin.firestore.FieldValue.serverTimestamp(),
+      date_of_birth: Timestamp.fromDate(new Date('2002-06-15')),
+      consent_given_at: FieldValue.serverTimestamp(),
       consent_version: '1.0.0',
-      created_at: admin.firestore.FieldValue.serverTimestamp(),
-      updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      created_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
     });
     console.log(`  ✅ ${student.full_name}`);
   }
@@ -164,13 +172,13 @@ async function seedStudents(collegeIds: Record<string, string>) {
 async function main() {
   console.log('🌱 Campus Connect Seed Script');
   console.log('================================');
-  console.log(`📡 Firestore emulator: ${emulatorHost} (project: ${projectId})`);
+  console.log(`📡 Firestore: ${process.env.FIRESTORE_EMULATOR_HOST}`);
 
   try {
     const collegeIds = await seedColleges();
     await seedStudents(collegeIds);
     console.log('\n✅ Seeding complete!');
-    console.log('Open the Firebase Emulator UI at http://127.0.0.1:4000');
+    console.log('Open Firebase Emulator UI at http://localhost:4000');
     process.exit(0);
   } catch (err) {
     console.error('❌ Seed error:', err);

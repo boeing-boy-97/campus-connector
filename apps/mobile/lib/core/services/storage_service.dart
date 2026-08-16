@@ -1,8 +1,4 @@
-import 'dart:async';
 import 'dart:io';
-import 'dart:math';
-
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -104,142 +100,30 @@ class StorageService {
     return pickAndCropImage(source: source!);
   }
 
-  /// Uploads a file to Cloud Storage and returns its **storage path**.
-  ///
-  /// Storage rules require specific custom metadata on every upload, and reject
-  /// the write without it. The previous implementation sent only
-  /// `uploaded_at`, so *every* mobile upload (verification photos, profile
-  /// photos and chat media alike) was denied. Use the purpose-specific helpers
-  /// below rather than calling this directly.
-  ///
-  /// The path is returned rather than a download URL because the backend accepts
-  /// Storage paths (which it re-verifies for ownership) and never free-form URLs.
+  /// Uploads a file to Firebase Storage and returns the download URL.
+  /// Shows upload progress via a callback.
   static Future<String> uploadFile({
     required File file,
     required String storagePath,
-    required Map<String, String> customMetadata,
-    void Function(double progress)? onProgress,
+    Function(double progress)? onProgress,
   }) async {
-    final reference = FirebaseStorage.instance.ref(storagePath);
+    final ref = FirebaseStorage.instance.ref(storagePath);
     final metadata = SettableMetadata(
       contentType: _getMimeType(file.path),
-      customMetadata: customMetadata,
+      customMetadata: {'uploaded_at': DateTime.now().toIso8601String()},
     );
 
-    final uploadTask = reference.putFile(file, metadata);
+    final uploadTask = ref.putFile(file, metadata);
 
-    StreamSubscription<TaskSnapshot>? progressSubscription;
     if (onProgress != null) {
-      progressSubscription = uploadTask.snapshotEvents.listen((snapshot) {
-        if (snapshot.totalBytes > 0) {
-          onProgress(snapshot.bytesTransferred / snapshot.totalBytes);
-        }
+      uploadTask.snapshotEvents.listen((snapshot) {
+        final progress = snapshot.bytesTransferred / snapshot.totalBytes;
+        onProgress(progress);
       });
     }
 
-    try {
-      await uploadTask;
-    } finally {
-      // Without this the subscription leaks for the lifetime of the isolate.
-      await progressSubscription?.cancel();
-    }
-
-    return storagePath;
-  }
-
-  /// Uploads private verification evidence.
-  /// Storage rules require `ownerId` to equal the caller's UID.
-  static Future<String> uploadVerificationPhoto({
-    required File file,
-    void Function(double progress)? onProgress,
-  }) async {
-    final uid = _requireUid();
-    _requireImage(file, maxBytes: 8 * 1024 * 1024);
-
-    return uploadFile(
-      file: file,
-      storagePath: 'verification_photos/$uid/${_fileName(file)}',
-      customMetadata: {'ownerId': uid},
-      onProgress: onProgress,
-    );
-  }
-
-  /// Uploads a profile photo. Commit the returned paths with
-  /// `FirebaseService.updateProfilePhotos` to make them visible.
-  static Future<String> uploadProfilePhoto({
-    required File file,
-    void Function(double progress)? onProgress,
-  }) async {
-    final uid = _requireUid();
-    _requireImage(file, maxBytes: 8 * 1024 * 1024);
-
-    return uploadFile(
-      file: file,
-      storagePath: 'profile_photos/$uid/${_fileName(file)}',
-      customMetadata: {'ownerId': uid},
-      onProgress: onProgress,
-    );
-  }
-
-  /// Uploads a chat attachment.
-  /// Storage rules require both `uploader_id` and `match_id`.
-  static Future<String> uploadChatMedia({
-    required File file,
-    required String matchId,
-    void Function(double progress)? onProgress,
-  }) async {
-    final uid = _requireUid();
-    final contentType = _getMimeType(file.path);
-    if (!_allowedChatTypes.contains(contentType)) {
-      throw StateError('Attachments must be a JPEG, PNG, WebP or MP4 file.');
-    }
-    if (await file.length() > AppConstants.maxMediaSizeMb * 1024 * 1024) {
-      throw StateError('Attachments must be under ${AppConstants.maxMediaSizeMb} MB.');
-    }
-
-    return uploadFile(
-      file: file,
-      storagePath: 'chat_media/$matchId/${_fileName(file)}',
-      customMetadata: {'uploader_id': uid, 'match_id': matchId},
-      onProgress: onProgress,
-    );
-  }
-
-  /// Resolves a Storage path to a temporary download URL for display.
-  static Future<String> resolveUrl(String storagePath) {
-    return FirebaseStorage.instance.ref(storagePath).getDownloadURL();
-  }
-
-  static const Set<String> _allowedImageTypes = {
-    'image/jpeg', 'image/png', 'image/webp',
-  };
-
-  static const Set<String> _allowedChatTypes = {
-    'image/jpeg', 'image/png', 'image/webp', 'video/mp4',
-  };
-
-  static String _requireUid() {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) throw StateError('You must be signed in to upload files.');
-    return uid;
-  }
-
-  static void _requireImage(File file, {required int maxBytes}) {
-    if (!_allowedImageTypes.contains(_getMimeType(file.path))) {
-      throw StateError('Choose a JPEG, PNG or WebP image.');
-    }
-    if (file.lengthSync() > maxBytes) {
-      throw StateError('Images must be under ${maxBytes ~/ (1024 * 1024)} MB.');
-    }
-  }
-
-  /// Unguessable file name that preserves the original extension.
-  static String _fileName(File file) {
-    final extension = file.path.split('.').last.toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9]'), '');
-    final suffix = extension.isEmpty ? 'bin' : extension;
-    final random = Random.secure().nextInt(1 << 32).toRadixString(16);
-    return '${DateTime.now().microsecondsSinceEpoch}_$random.$suffix';
+    await uploadTask;
+    return await ref.getDownloadURL();
   }
 
   static String _getMimeType(String path) {
@@ -260,6 +144,5 @@ class StorageService {
   }
 }
 
-// Riverpod provider — StorageService is a static utility, so the provider
-// exposes the type rather than an instance.
-final storageServiceProvider = Provider<Type>((_) => StorageService);
+// Riverpod provider
+final storageServiceProvider = Provider<StorageService>((_) => StorageService());

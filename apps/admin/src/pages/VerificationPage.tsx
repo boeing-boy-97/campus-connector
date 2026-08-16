@@ -1,282 +1,215 @@
-import { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle, ChevronLeft, Clock, RefreshCw, XCircle } from 'lucide-react';
-import {
-  describeError,
-  getVerificationQueue,
-  reviewVerification,
-  type VerificationQueueItem,
-} from '../services/adminService';
-import { Avatar } from '../components/Avatar';
-import { Badge } from '../components/Badge';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getVerificationQueue, reviewVerification } from '../services/adminService';
+import { CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 
-/**
- * Verification review.
- *
- * The original layout was a fixed 340 px column inside `height:100vh;
- * overflow:hidden`, which was unusable on anything narrow. It is now a
- * responsive two-pane layout that collapses to a single pane with a back button
- * on small screens.
- */
 export default function VerificationPage() {
-  const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<VerificationQueueItem | null>(null);
+  const [selected, setSelected] = useState<any>(null);
   const [notes, setNotes] = useState('');
-  const [validationError, setValidationError] = useState('');
+  const queryClient = useQueryClient();
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['verification-queue'],
     queryFn: getVerificationQueue,
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
   });
 
-  // Keep the selection in sync with the refreshed queue, and drop it once the
-  // request has been reviewed by anyone.
-  useEffect(() => {
-    if (!selected || !data) return;
-    const current = data.find((item) => item.id === selected.id);
-    if (!current) setSelected(null);
-    else if (current.verification_photo_url !== selected.verification_photo_url) setSelected(current);
-  }, [data, selected]);
-
-  const { mutate: review, isPending, error: reviewError } = useMutation({
-    mutationFn: ({ id, action, reviewNotes }: {
-      id: string;
-      action: 'approve' | 'reject';
-      reviewNotes?: string;
-    }) => reviewVerification(id, action, reviewNotes),
+  const { mutate: review, isPending: reviewing } = useMutation({
+    mutationFn: ({ id, action, notes }: { id: string; action: 'approve' | 'reject'; notes?: string }) =>
+      reviewVerification(id, action, notes),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['verification-queue'] });
-      void queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
-      void queryClient.invalidateQueries({ queryKey: ['pendingCounts'] });
+      queryClient.invalidateQueries({ queryKey: ['verification-queue'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['pendingCounts'] });
       setSelected(null);
       setNotes('');
-      setValidationError('');
     },
   });
 
   const handleAction = (action: 'approve' | 'reject') => {
     if (!selected) return;
-    if (action === 'reject' && notes.trim().length < 5) {
-      setValidationError('A rejection reason of at least 5 characters is required — the student sees it.');
+    if (action === 'reject' && !notes.trim()) {
+      alert('Please provide a reason for rejection.');
       return;
     }
-    setValidationError('');
-    review({ id: selected.id, action, reviewNotes: notes.trim() || undefined });
+    review({ id: selected.id, action, notes: notes.trim() || undefined });
   };
 
-  const pendingCount = data?.length ?? 0;
-
   return (
-    <div className={`split-view${selected ? ' has-selection' : ''}`}>
-      <aside className="split-list" aria-label="Verification queue">
-        <div className="split-list-head">
-          <div>
-            <h2>Verification queue</h2>
-            <p className="text-sm text-muted">
-              {isLoading ? 'Loading…' : `${pendingCount} pending review${pendingCount === 1 ? '' : 's'}`}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => void refetch()}
-            disabled={isFetching}
-            aria-label="Refresh queue"
-          >
-            <RefreshCw size={16} />
-          </button>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+      {/* Queue List */}
+      <div style={{ width: 340, borderRight: '1px solid var(--border)', overflowY: 'auto', background: 'var(--bg-surface)' }}>
+        <div style={{ padding: '20px 16px', borderBottom: '1px solid var(--border)' }}>
+          <h2 style={{ fontSize: 18 }}>Verification Queue</h2>
+          <p className="text-sm text-muted mt-4">
+            {data?.length ?? 0} pending review{data?.length !== 1 ? 's' : ''}
+          </p>
         </div>
 
-        {isLoading && Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="split-list-item">
-            <div className="skeleton" style={{ height: 18, marginBottom: 8, borderRadius: 4 }} />
-            <div className="skeleton" style={{ height: 13, width: '60%', borderRadius: 4 }} />
-          </div>
-        ))}
-
-        {isError && (
+        {isLoading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} style={{ padding: 16, borderBottom: '1px solid var(--border)' }}>
+              <div className="skeleton" style={{ height: 20, marginBottom: 8, borderRadius: 4 }} />
+              <div className="skeleton" style={{ height: 14, width: '60%', borderRadius: 4 }} />
+            </div>
+          ))
+        ) : data?.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon" aria-hidden="true">⚠️</div>
-            <div className="empty-state-title">Queue unavailable</div>
-            <p className="text-sm">{describeError(error, 'Please try again.')}</p>
-            <button type="button" className="btn btn-outline btn-sm mt-4" onClick={() => void refetch()}>
-              Try again
-            </button>
+            <div className="empty-state-icon">✅</div>
+            <div className="empty-state-title">Queue is clear!</div>
+            <p className="text-sm">No pending verifications.</p>
           </div>
-        )}
-
-        {!isLoading && !isError && pendingCount === 0 && (
-          <div className="empty-state">
-            <div className="empty-state-icon" aria-hidden="true">✅</div>
-            <div className="empty-state-title">Queue is clear</div>
-            <p className="text-sm">No students are waiting for verification.</p>
-          </div>
-        )}
-
-        {!isError && data?.map((item) => (
+        ) : data?.map((item: any) => (
           <button
             key={item.id}
-            type="button"
-            className={`split-list-item${selected?.id === item.id ? ' is-selected' : ''}`}
-            onClick={() => { setSelected(item); setNotes(''); setValidationError(''); }}
-            aria-current={selected?.id === item.id}
+            onClick={() => { setSelected(item); setNotes(''); }}
+            style={{
+              width: '100%', padding: 16, textAlign: 'left', border: 'none',
+              borderBottom: '1px solid var(--border)',
+              background: selected?.id === item.id ? 'rgba(108,99,255,0.1)' : 'transparent',
+              cursor: 'pointer', borderLeft: selected?.id === item.id ? '3px solid var(--color-primary)' : '3px solid transparent',
+              transition: 'all 0.15s',
+            }}
           >
             <div className="flex items-center gap-3">
-              <Avatar name={item.name} src={item.profile_photos[0]} size={42} />
-              <div style={{ minWidth: 0, textAlign: 'left' }}>
+              <div style={{ position: 'relative' }}>
+                <img
+                  src={item.profile_photo || '/avatar-placeholder.png'}
+                  className="avatar"
+                  style={{ width: 44, height: 44 }}
+                  alt=""
+                />
+                <div style={{
+                  position: 'absolute', bottom: -2, right: -2,
+                  width: 16, height: 16, borderRadius: '50%',
+                  background: '#F59E0B', border: '2px solid var(--bg-surface)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  <Clock size={10} color="white" />
+                </div>
+              </div>
+              <div style={{ minWidth: 0 }}>
                 <div className="font-semibold truncate">{item.name}</div>
                 <div className="text-xs text-muted truncate">{item.college_name}</div>
-                <div className="text-xs text-muted">{item.submitted_at ?? 'Just now'}</div>
+                <div className="text-xs text-muted">{item.submitted_at}</div>
               </div>
             </div>
           </button>
         ))}
-      </aside>
+      </div>
 
-      <section className="split-detail">
+      {/* Review Panel */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
         {!selected ? (
-          <div className="empty-state" style={{ marginTop: 60 }}>
-            <div className="empty-state-icon" aria-hidden="true">👈</div>
-            <div className="empty-state-title">Select a request</div>
-            <p className="text-sm">Choose a student from the queue to review their evidence.</p>
+          <div className="empty-state" style={{ marginTop: 80 }}>
+            <div className="empty-state-icon">👈</div>
+            <div className="empty-state-title">Select a Request</div>
+            <p className="text-sm">Choose a verification request from the queue to review.</p>
           </div>
         ) : (
-          <div className="review-panel">
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm show-sm"
-              onClick={() => setSelected(null)}
-            >
-              <ChevronLeft size={15} /> Back to queue
-            </button>
-
-            <div className="card-head">
+          <div style={{ maxWidth: 700 }}>
+            {/* Header */}
+            <div className="flex justify-between items-center mb-4">
               <div>
                 <h2>{selected.name}</h2>
-                <p className="text-sm text-muted">
-                  {selected.college_email} · {selected.college_name}
-                </p>
+                <p className="text-sm text-muted">{selected.college_email} · {selected.college_name}</p>
               </div>
-              <Badge variant="warning"><Clock size={12} /> Pending review</Badge>
+              <span className="badge badge-warning">
+                <Clock size={12} /> Pending Review
+              </span>
             </div>
 
+            {/* Profile Details */}
             <div className="card mb-4">
-              <h4 style={{ marginBottom: 14 }}>Student details</h4>
-              <dl className="detail-grid">
-                {([
+              <h4 style={{ marginBottom: 16 }}>Student Details</h4>
+              <div className="grid-2" style={{ gap: 12 }}>
+                {[
                   ['Branch', selected.branch],
-                  ['Year', selected.year ? `Year ${selected.year}` : null],
+                  ['Year', `Year ${selected.year}`],
                   ['Gender', selected.gender],
-                  ['Date of birth', selected.dob],
-                  [
-                    'Open to',
-                    selected.intent_flags
-                      ? Object.entries(selected.intent_flags)
-                        .filter(([, enabled]) => enabled)
-                        .map(([key]) => key)
-                        .join(', ')
-                      : null,
-                  ],
+                  ['Date of Birth', selected.dob],
+                  ['Intent', selected.intent_flags ? Object.entries(selected.intent_flags).filter(([,v]) => v).map(([k]) => k).join(', ') : '—'],
                   ['Submitted', selected.submitted_at],
-                ] as Array<[string, string | null]>).map(([label, value]) => (
+                ].map(([label, value]) => (
                   <div key={label}>
-                    <dt>{label}</dt>
-                    <dd>{value || '—'}</dd>
+                    <div className="text-xs text-muted" style={{ marginBottom: 4 }}>{label}</div>
+                    <div className="font-semibold" style={{ fontSize: 14 }}>{value || '—'}</div>
                   </div>
                 ))}
-              </dl>
+              </div>
             </div>
 
+            {/* Photos */}
             <div className="card mb-4">
-              <h4 style={{ marginBottom: 14 }}>Evidence</h4>
-              <div className="photo-review-grid">
-                {selected.verification_photo_url ? (
-                  <figure>
-                    <figcaption className="text-xs text-muted">
-                      🔒 Verification photo (private, expires shortly)
-                    </figcaption>
-                    <a href={selected.verification_photo_url} target="_blank" rel="noreferrer noopener">
-                      <img
-                        src={selected.verification_photo_url}
-                        className="photo-preview"
-                        alt={`Verification evidence submitted by ${selected.name}`}
-                      />
-                    </a>
-                  </figure>
-                ) : (
-                  <div className="alert alert-warning">
-                    <AlertTriangle size={16} />
-                    <span>The verification photo could not be loaded. Refresh the queue to get a new link.</span>
+              <h4 style={{ marginBottom: 16 }}>Photos</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+                {/* Verification photo — shown only to admins */}
+                {selected.uniform_photo_url && (
+                  <div>
+                    <div className="text-xs text-muted mb-4" style={{ marginBottom: 8 }}>
+                      🔒 Verification Photo (Private)
+                    </div>
+                    <img
+                      src={selected.uniform_photo_url}
+                      className="photo-preview"
+                      alt="Verification photo"
+                    />
                   </div>
                 )}
-
-                {selected.profile_photos.map((url, index) => (
-                  <figure key={url}>
-                    <figcaption className="text-xs text-muted">Profile photo {index + 1}</figcaption>
-                    <img src={url} className="photo-preview" alt={`Profile photo ${index + 1}`} />
-                  </figure>
+                {selected.profile_photos?.map((url: string, i: number) => (
+                  <div key={i}>
+                    <div className="text-xs text-muted" style={{ marginBottom: 8 }}>
+                      Profile Photo {i + 1}
+                    </div>
+                    <img src={url} className="photo-preview" alt={`Profile ${i + 1}`} />
+                  </div>
                 ))}
               </div>
             </div>
 
+            {/* Decision */}
             <div className="card">
-              <h4 style={{ marginBottom: 14 }}>Decision</h4>
+              <h4 style={{ marginBottom: 16 }}>Review Decision</h4>
 
               <div className="form-group">
                 <label className="form-label" htmlFor="review-notes">
-                  Notes <span className="text-muted">(required to reject — the student sees this)</span>
+                  Notes (required for rejection)
                 </label>
                 <textarea
                   id="review-notes"
                   className="form-input"
                   rows={3}
-                  placeholder="e.g. The ID card is blurry — please resubmit with the name and college clearly visible."
+                  placeholder="e.g. Photo is blurry, please resubmit with college ID visible"
                   value={notes}
-                  onChange={(event) => { setNotes(event.target.value); setValidationError(''); }}
-                  maxLength={500}
+                  onChange={(e) => setNotes(e.target.value)}
                   style={{ resize: 'vertical', fontFamily: 'inherit' }}
                 />
               </div>
 
-              {validationError && (
-                <div className="alert alert-danger" role="alert">
-                  <AlertTriangle size={16} /><span>{validationError}</span>
-                </div>
-              )}
-
-              <div className="action-row">
+              <div className="flex gap-2" style={{ marginTop: 8 }}>
                 <button
-                  type="button"
                   className="btn btn-success"
                   onClick={() => handleAction('approve')}
-                  disabled={isPending}
+                  disabled={reviewing}
                   style={{ flex: 1, justifyContent: 'center' }}
                 >
                   <CheckCircle size={16} />
-                  {isPending ? 'Processing…' : 'Approve'}
+                  {reviewing ? 'Processing…' : 'Approve ✓'}
                 </button>
                 <button
-                  type="button"
                   className="btn btn-danger"
                   onClick={() => handleAction('reject')}
-                  disabled={isPending}
+                  disabled={reviewing}
                   style={{ flex: 1, justifyContent: 'center' }}
                 >
                   <XCircle size={16} />
-                  {isPending ? 'Processing…' : 'Reject'}
+                  {reviewing ? 'Processing…' : 'Reject ✗'}
                 </button>
               </div>
-              {reviewError && (
-                <div className="alert alert-danger" role="alert" style={{ marginTop: 12 }}>
-                  <AlertTriangle size={16} />
-                  <span>{describeError(reviewError, 'The review could not be saved.')}</span>
-                </div>
-              )}
             </div>
           </div>
         )}
-      </section>
+      </div>
     </div>
   );
 }

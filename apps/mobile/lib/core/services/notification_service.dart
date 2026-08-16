@@ -1,13 +1,8 @@
-import 'dart:async';
-
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-
-import 'firebase_service.dart';
+import 'package:flutter/material.dart';
 
 /// Handles FCM setup, permission requests, token management,
 /// foreground notifications, and tap routing.
@@ -81,53 +76,8 @@ class NotificationService {
     return _messaging.getToken();
   }
 
-  /// Listen for token refreshes.
+  /// Listen for token refreshes — update in Firestore when token changes.
   static Stream<String> get onTokenRefresh => _messaging.onTokenRefresh;
-
-  /// Registers this device's FCM token against the signed-in profile, and keeps
-  /// it current when FCM rotates it.
-  ///
-  /// Nothing previously persisted the token, so `fcm_token` stayed null on every
-  /// student document and the backend could never deliver a push — every
-  /// notification existed only as an in-app record.
-  static StreamSubscription<String>? _tokenSubscription;
-
-  static Future<void> registerToken() async {
-    if (FirebaseAuth.instance.currentUser == null) return;
-
-    try {
-      final token = await _messaging.getToken();
-      if (token != null && token.isNotEmpty) {
-        await FirebaseService.updateFcmToken(token);
-      }
-    } catch (error) {
-      // A token that cannot be stored only costs push delivery; the in-app
-      // notification record is still written server-side.
-      debugPrint('FCM token registration failed: $error');
-    }
-
-    await _tokenSubscription?.cancel();
-    _tokenSubscription = _messaging.onTokenRefresh.listen((token) async {
-      if (FirebaseAuth.instance.currentUser == null) return;
-      try {
-        await FirebaseService.updateFcmToken(token);
-      } catch (error) {
-        debugPrint('FCM token refresh failed: $error');
-      }
-    });
-  }
-
-  /// Stops token syncing and clears the stored token on sign-out, so the device
-  /// no longer receives notifications for the previous account.
-  static Future<void> unregisterToken() async {
-    await _tokenSubscription?.cancel();
-    _tokenSubscription = null;
-    try {
-      await _messaging.deleteToken();
-    } catch (error) {
-      debugPrint('FCM token deletion failed: $error');
-    }
-  }
 
   // ── Private helpers ──────────────────────────────────────────────────────
 

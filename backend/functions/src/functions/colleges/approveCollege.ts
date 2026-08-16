@@ -2,7 +2,7 @@
 // ║  colleges/approveCollege.ts — Admin approves or rejects a college        ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 import { z } from 'zod';
 import { requireAdmin } from '../../middleware/auth.middleware';
 import { validate, Schemas } from '../../middleware/validate.middleware';

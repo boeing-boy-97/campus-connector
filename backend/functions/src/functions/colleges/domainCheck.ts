@@ -2,7 +2,7 @@
 // ║  colleges/domainCheck.ts — Lookup college branding by email domain      ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 import { z } from 'zod';
 import { validate, Schemas } from '../../middleware/validate.middleware';
 import { handleUnknownError } from '../../utils/errors';
@@ -15,7 +15,7 @@ const schema = z.object({
 export const checkEmailDomain = functions
   .region('asia-south1')
   .runWith({ memory: '128MB', timeoutSeconds: 15 })
-  .https.onCall(async (data, _context) => {
+  .https.onCall(async (data, context) => {
     try {
       const { email } = validate(schema, data);
       const college = await CollegeService.getByDomain(email);

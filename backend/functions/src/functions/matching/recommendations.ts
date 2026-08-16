@@ -2,7 +2,7 @@
 // ║  recommendations.ts — Discovery feed                                    ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 import { z } from 'zod';
 import { requireVerified } from '../../middleware/auth.middleware';
 import { validate, Schemas } from '../../middleware/validate.middleware';

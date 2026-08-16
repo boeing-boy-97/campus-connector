@@ -2,7 +2,7 @@
 // ║  logger.ts — Structured logger with context tagging                     ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 

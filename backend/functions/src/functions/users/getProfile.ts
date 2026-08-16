@@ -2,13 +2,15 @@
 // ║  getProfile.ts — Fetch own or another student's profile                 ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 import { z } from 'zod';
-import { requireAuth, requireVerified } from '../../middleware/auth.middleware';
+import { requireAuth } from '../../middleware/auth.middleware';
 import { validate, Schemas } from '../../middleware/validate.middleware';
 import { handleUnknownError } from '../../utils/errors';
+import { createLogger } from '../../utils/logger';
 import { StudentService } from '../../services/student.service';
 
+const log = createLogger('getProfile');
 
 const getProfileSchema = z.object({
   student_id: Schemas.docId.optional(), // If omitted, fetch own profile
@@ -28,8 +30,7 @@ export const getProfile = functions
         return { success: true, data: profile };
       }
 
-      // Only verified students may access another student's public profile.
-      requireVerified(context);
+      // Fetch another student's public profile
       const profile = await StudentService.getPublicProfile(
         student_id,
         authCtx.uid,

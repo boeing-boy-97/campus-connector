@@ -3,7 +3,7 @@
 // ║  Wraps Firebase HttpsError with consistent codes and logging            ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 import { ERROR_CODES } from '../../../../shared/constants';
 import { logger } from './logger';
 
@@ -84,6 +84,9 @@ export function handleUnknownError(error: unknown, context: string): never {
   if (error instanceof functions.https.HttpsError) {
     throw error;
   }
-  logger.error(`[${context}] Unhandled error:`, error);
+  const diagnostic = error instanceof Error
+    ? { name: error.name, message: error.message, stack: error.stack }
+    : { value: String(error) };
+  logger.error(`[${context}] Unhandled error`, diagnostic);
   throw Errors.internal();
 }

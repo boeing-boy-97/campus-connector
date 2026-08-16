@@ -1,84 +1,21 @@
 rules_version = '2';
 
-// ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  CAMPUS CONNECT — CLOUD STORAGE SECURITY RULES                           ║
-// ║                                                                          ║
-// ║  Every bucket path is default-deny. Uploads are validated here (owner,   ║
-// ║  size, content type, required metadata) so a client cannot write an       ║
-// ║  object that a Cloud Function would later refuse to accept.              ║
-// ╚══════════════════════════════════════════════════════════════════════════╝
-
 service firebase.storage {
   match /b/{bucket}/o {
-    function signedIn() {
-      return request.auth != null;
+
+    function isModerator() {
+      return request.auth != null
+        && (request.auth.token.role == 'admin' || request.auth.token.role == 'moderator');
     }
 
-    function isImage() {
-      return request.resource.contentType.matches('image/(jpeg|png|webp)');
-    }
-
-    function isVerifiedStudent() {
-      return signedIn()
-        && request.auth.token.get('verification_status', 'pending') == 'approved';
-    }
-
-    function isMatchParticipant(matchId) {
-      let matchDocument = firestore.get(
-        /databases/(default)/documents/matches/$(matchId)
-      ).data;
-      return signedIn()
-        && matchDocument.status == 'active'
-        && (matchDocument.student_a_id == request.auth.uid
-          || matchDocument.student_b_id == request.auth.uid);
-    }
-
-    // ── Verification evidence ───────────────────────────────────────────────
-    // Private to its owner. Moderators receive a short-lived signed URL from the
-    // protected getVerificationQueue callable rather than direct read access.
-    match /verification_photos/{userId}/{fileName} {
-      allow read: if signedIn() && request.auth.uid == userId;
-      allow create, update: if signedIn()
+    match /verification_photos/{userId}/{allPaths=**} {
+      // IDs and uniform photos are sensitive. They are never visible to other students.
+      allow read: if request.auth != null
+        && (request.auth.uid == userId || isModerator());
+      allow create: if request.auth != null
         && request.auth.uid == userId
-        && request.resource.size <= 8 * 1024 * 1024
-        && isImage()
-        && request.resource.metadata.ownerId == userId;
-      allow delete: if signedIn() && request.auth.uid == userId;
-    }
-
-    // ── Profile photos ──────────────────────────────────────────────────────
-    // Owner-writable. Readable by any verified student because these images are
-    // shown in the discovery feed and chat headers to same-college peers; the
-    // Firestore layer decides *which* profiles a student can see, and only paths
-    // committed through updateProfilePhotos are ever surfaced.
-    match /profile_photos/{userId}/{fileName} {
-      allow read: if isVerifiedStudent() || (signedIn() && request.auth.uid == userId);
-      allow create, update: if signedIn()
-        && request.auth.uid == userId
-        && request.resource.size <= 8 * 1024 * 1024
-        && isImage()
-        && request.resource.metadata.ownerId == userId;
-      allow delete: if signedIn() && request.auth.uid == userId;
-    }
-
-    // ── College branding assets ─────────────────────────────────────────────
-    // Readable by any signed-in user (logos are shown pre-verification).
-    // Writes happen through the Admin SDK only.
-    match /college_assets/{collegeId}/{fileName} {
-      allow read: if signedIn();
-      allow write: if false;
-    }
-
-    // ── Chat media ──────────────────────────────────────────────────────────
-    // Private to the participants of an active match. Immutable once written so
-    // a sender cannot swap the contents of a delivered message.
-    match /chat_media/{matchId}/{fileName} {
-      allow read: if isMatchParticipant(matchId);
-      allow create: if isMatchParticipant(matchId)
-        && request.resource.size <= 25 * 1024 * 1024
-        && request.resource.contentType.matches('image/(jpeg|png|webp)|video/mp4')
-        && request.resource.metadata.uploader_id == request.auth.uid
-        && request.resource.metadata.match_id == matchId;
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
       allow update, delete: if false;
     }
 

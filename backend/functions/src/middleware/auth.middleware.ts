@@ -3,7 +3,8 @@
 // ║  Use these to guard Cloud Function handlers cleanly                     ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
+import { auth as adminAuth } from '../config/firebase';
 import { VerificationStatus } from '../../../../shared/enums';
 import { Errors } from '../utils/errors';
 import { createLogger } from '../utils/logger';

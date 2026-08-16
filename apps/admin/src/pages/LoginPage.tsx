@@ -1,133 +1,183 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { FirebaseError } from 'firebase/app';
-import { AlertTriangle, ShieldCheck } from 'lucide-react';
 import { auth } from '../services/firebase';
-
-/** Maps Firebase auth error codes to messages that do not leak account existence. */
-function authErrorMessage(error: unknown): string {
-  if (error instanceof FirebaseError) {
-    switch (error.code) {
-      case 'auth/too-many-requests':
-        return 'Too many attempts. Please wait a few minutes before trying again.';
-      case 'auth/network-request-failed':
-        return 'Could not reach the authentication service. Check your connection.';
-      case 'auth/user-disabled':
-        return 'This account has been disabled.';
-      case 'auth/invalid-email':
-        return 'Enter a valid e-mail address.';
-      default:
-        // Deliberately generic: distinguishing "wrong password" from "no such
-        // user" would let an attacker enumerate staff accounts.
-        return 'Invalid e-mail or password.';
-    }
-  }
-  return 'Sign-in failed. Please try again.';
-}
-
-const STAFF_ROLES = ['admin', 'moderator'];
+import { useNavigate } from 'react-router-dom';
 
 export default function LoginPage() {
-  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // If a staff session already exists, skip the form.
-  useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
+  const navigate = useNavigate();
 
-    let active = true;
-    void user.getIdTokenResult()
-      .then((token) => {
-        if (!active) return;
-        if (STAFF_ROLES.includes(String(token.claims.role))) {
-          navigate('/dashboard', { replace: true });
-        }
-      })
-      .catch(() => undefined);
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
 
-    return () => { active = false; };
-  }, [navigate]);
-
-  const handleLogin = async (event: FormEvent) => {
-    event.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
 
-      // Force-refresh so a freshly granted role is visible immediately.
-      const token = await credential.user.getIdTokenResult(true);
-      const role = String(token.claims.role ?? '');
+      // TEMP ADMIN CHECK
+      const allowedAdmins = [
+        'vedant.test@gmail.com'
+      ];
 
-      if (!STAFF_ROLES.includes(role)) {
+      const userEmail = credential.user.email || '';
+
+      if (!allowedAdmins.includes(userEmail)) {
         await signOut(auth);
-        setError(
-          'This account does not have administrator or moderator access. '
-          + 'Ask an administrator to grant a staff role.',
-        );
+        setError('Access denied. Admin account required.');
         return;
       }
 
-      navigate('/dashboard', { replace: true });
-    } catch (caught) {
-      setError(authErrorMessage(caught));
+      navigate('/dashboard');
+    } catch (err: any) {
+      console.error(err);
+      setError('Invalid credentials. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="login-page">
-      <div className="login-shell">
-        <div className="login-brand">
-          <div className="login-logo" aria-hidden="true">CC</div>
-          <h1>Campus Connect</h1>
-          <p className="text-muted">Administration &amp; moderation</p>
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'var(--bg)',
+        backgroundImage:
+          'radial-gradient(ellipse at 30% 20%, rgba(108,99,255,0.12) 0%, transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(233,30,99,0.08) 0%, transparent 60%)',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 420,
+          padding: '0 20px',
+        }}
+      >
+        <div
+          style={{
+            textAlign: 'center',
+            marginBottom: 40,
+          }}
+        >
+          <div
+            style={{
+              width: 70,
+              height: 70,
+              borderRadius: 18,
+              background:
+                'linear-gradient(135deg, #6C63FF, #E91E63)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 30,
+              margin: '0 auto 16px',
+            }}
+          >
+            🎓
+          </div>
+
+          <h1
+            style={{
+              fontSize: 36,
+              fontWeight: 800,
+              marginBottom: 8,
+            }}
+          >
+            Campus Connect
+          </h1>
+
+          <p
+            style={{
+              color: 'var(--text-secondary)',
+              fontSize: 16,
+            }}
+          >
+            Admin Dashboard
+          </p>
         </div>
 
-        <div className="card login-card">
-          <h2 style={{ marginBottom: 20 }}>Sign in</h2>
+        <div
+          className="card"
+          style={{
+            padding: 32,
+          }}
+        >
+          <h2
+            style={{
+              fontSize: 28,
+              marginBottom: 24,
+            }}
+          >
+            Sign In
+          </h2>
 
           {error && (
-            <div className="alert alert-danger" role="alert">
-              <AlertTriangle size={16} aria-hidden="true" />
-              <span>{error}</span>
+            <div
+              style={{
+                background: 'rgba(239,68,68,0.12)',
+                border: '1px solid rgba(239,68,68,0.3)',
+                color: '#EF4444',
+                padding: '12px 16px',
+                borderRadius: 8,
+                fontSize: 14,
+                marginBottom: 16,
+              }}
+            >
+              ⚠️ {error}
             </div>
           )}
 
-          <form onSubmit={handleLogin} noValidate>
+          <form onSubmit={handleLogin}>
             <div className="form-group">
-              <label className="form-label" htmlFor="email">E-mail address</label>
+              <label
+                className="form-label"
+                htmlFor="email"
+              >
+                Email Address
+              </label>
+
               <input
                 id="email"
                 className="form-input"
                 type="email"
-                autoComplete="username"
-                autoCapitalize="none"
-                spellCheck={false}
-                placeholder="you@campusconnect.app"
+                placeholder="admin@campusconnect.app"
                 value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                onChange={(e) =>
+                  setEmail(e.target.value)
+                }
                 required
               />
             </div>
 
             <div className="form-group">
-              <label className="form-label" htmlFor="password">Password</label>
+              <label
+                className="form-label"
+                htmlFor="password"
+              >
+                Password
+              </label>
+
               <input
                 id="password"
                 className="form-input"
                 type="password"
-                autoComplete="current-password"
                 placeholder="••••••••"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(e) =>
+                  setPassword(e.target.value)
+                }
                 required
               />
             </div>
@@ -135,17 +185,27 @@ export default function LoginPage() {
             <button
               type="submit"
               className="btn btn-primary"
-              style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
-              disabled={loading || !email.trim() || !password}
+              style={{
+                width: '100%',
+                marginTop: 8,
+                justifyContent: 'center',
+              }}
+              disabled={loading}
             >
-              {loading ? <><span className="spinner" /> Signing in…</> : 'Sign in'}
+              {loading ? 'Signing In...' : 'Sign In'}
             </button>
           </form>
         </div>
 
-        <p className="login-note">
-          <ShieldCheck size={14} aria-hidden="true" />
-          Restricted access. All actions in this panel are recorded in the audit log.
+        <p
+          style={{
+            color: 'var(--text-muted)',
+            fontSize: 12,
+            textAlign: 'center',
+            marginTop: 20,
+          }}
+        >
+          Restricted access. Admin accounts only.
         </p>
       </div>
     </div>

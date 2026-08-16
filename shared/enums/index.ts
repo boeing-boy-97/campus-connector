@@ -77,9 +77,6 @@ export enum NotificationType {
   CONNECT_REQUEST = 'connect_request',
   VERIFICATION_APPROVED = 'verification_approved',
   VERIFICATION_REJECTED = 'verification_rejected',
-  ACCOUNT_SUSPENDED = 'account_suspended',
-  ACCOUNT_REINSTATED = 'account_reinstated',
-  ADMIN_ANNOUNCEMENT = 'admin_announcement',
 }
 
 export enum UserRole {

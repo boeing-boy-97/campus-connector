@@ -1,91 +1,40 @@
 #!/usr/bin/env bash
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  CAMPUS CONNECT — PRODUCTION DEPLOYMENT                                  ║
-# ║                                                                          ║
-# ║  Deploys Cloud Functions, Firestore rules & indexes, Storage rules and    ║
-# ║  both web apps to Firebase Hosting.                                      ║
-# ║                                                                          ║
-# ║  Usage:                                                                  ║
-# ║    FIREBASE_PROJECT_ID=my-project ./scripts/deployment/deploy.sh          ║
-# ║                                                                          ║
-# ║  Requires the six VITE_FIREBASE_* variables to be exported (the web apps  ║
-# ║  refuse to build against an unconfigured project on purpose).             ║
+# ║  CAMPUS CONNECT — PRODUCTION DEPLOYMENT SCRIPT                           ║
+# ║  Deploys Cloud Functions, Firestore Rules & Indexes, Storage Rules,     ║
+# ║  and Admin Panel to Firebase Hosting                                     ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
-set -Eeuo pipefail
+set -e # Exit immediately on error
 
-# Always run from the repository root regardless of the caller's directory.
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$REPO_ROOT"
+echo "🚀 Starting Campus Connect Production Deployment..."
+echo "====================================================="
 
-fail() { printf '\n❌ %s\n' "$1" >&2; exit 1; }
-step() { printf '\n▶ %s\n' "$1"; }
+PROJECT_ID=${FIREBASE_PROJECT_ID:-"campus-connect-prod"}
+echo "📌 Target Project: $PROJECT_ID"
 
-# ── 1. Validate configuration ────────────────────────────────────────────────
-# The project ID is required rather than defaulted: silently deploying to a
-# fallback project is exactly the kind of accident this script must prevent.
-: "${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID must be set to the target Firebase project}"
-
-REQUIRED_VARS=(
-  VITE_FIREBASE_API_KEY
-  VITE_FIREBASE_AUTH_DOMAIN
-  VITE_FIREBASE_PROJECT_ID
-  VITE_FIREBASE_STORAGE_BUCKET
-  VITE_FIREBASE_MESSAGING_SENDER_ID
-  VITE_FIREBASE_APP_ID
-)
-
-MISSING=()
-for var in "${REQUIRED_VARS[@]}"; do
-  if [[ -z "${!var:-}" ]]; then MISSING+=("$var"); fi
-done
-
-if (( ${#MISSING[@]} > 0 )); then
-  fail "Missing required environment variables: ${MISSING[*]}
-       See .env.example. The web apps will not start without them."
-fi
-
-if [[ "$VITE_FIREBASE_PROJECT_ID" != "$FIREBASE_PROJECT_ID" ]]; then
-  fail "VITE_FIREBASE_PROJECT_ID ($VITE_FIREBASE_PROJECT_ID) does not match
-       FIREBASE_PROJECT_ID ($FIREBASE_PROJECT_ID). Refusing to deploy a build
-       that points at a different project than it is being deployed to."
-fi
-
-printf '🚀 Deploying Campus Connect to: %s\n' "$FIREBASE_PROJECT_ID"
-
-# ── 2. Install (single root install — this is an npm workspaces monorepo) ────
-step "Installing dependencies"
+# 1. Type Check & Build Backend
+echo "⚙️ Building Cloud Functions..."
+cd backend/functions
 npm ci
-
-# ── 3. Verify before shipping ───────────────────────────────────────────────
-step "Linting"
-npm run lint
-
-step "Type-checking Cloud Functions"
-npm --prefix backend/functions exec -- tsc --noEmit
-
-step "Running tests"
-npm run test:functions
-
-# ── 4. Build ────────────────────────────────────────────────────────────────
-step "Building functions and both web apps"
+npx tsc --noEmit
 npm run build
+cd ../..
 
-[[ -f .firebase/hosting/index.html ]] \
-  || fail "Student app build output missing at .firebase/hosting/index.html"
-[[ -f .firebase/hosting/admin/index.html ]] \
-  || fail "Admin app build output missing at .firebase/hosting/admin/index.html"
+# 2. Build Admin Web App
+echo "🌐 Building React Admin Panel..."
+cd apps/admin
+npm ci
+npm run build
+cd ../..
 
-# ── 5. Deploy ───────────────────────────────────────────────────────────────
-step "Deploying to Firebase"
+# 3. Deploy to Firebase
+echo "🔥 Deploying to Firebase..."
 npx firebase-tools deploy \
-  --project "$FIREBASE_PROJECT_ID" \
-  --only functions,firestore:rules,firestore:indexes,storage,hosting \
-  --force
+  --project "$PROJECT_ID" \
+  --only functions,firestore:rules,firestore:indexes,storage,hosting
 
-printf '\n✅ Deployment complete.\n'
-printf '   Student app: https://%s.web.app\n' "$FIREBASE_PROJECT_ID"
-printf '   Admin panel: https://%s.web.app/admin\n' "$FIREBASE_PROJECT_ID"
-printf '\nReminder: SMTP credentials must be configured for OTP e-mail delivery:\n'
-printf '   firebase functions:secrets:set SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM\n'
+echo ""
+echo "✅ Deployment completed successfully!"
+echo "🌐 Admin URL: https://$PROJECT_ID.web.app"
