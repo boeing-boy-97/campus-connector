@@ -67,6 +67,28 @@ export const db = getFirestore(app);
 export const functions = getFunctions(app, 'asia-south1');
 export const storage = getStorage(app);
 
+// Optional Analytics — only when measurementId is present and window exists
+// User provided G-V0ZKW6LDGB, so we init lazily to not block startup or CSP.
+if (typeof window !== 'undefined' && firebaseConfig.measurementId && !firebaseConfigError) {
+  // Dynamic import to keep main bundle lean and avoid analytics in emulator
+  import('firebase/analytics')
+    .then(({ getAnalytics, isSupported }) => {
+      isSupported()
+        .then((ok) => {
+          if (ok) {
+            try {
+              getAnalytics(app);
+              console.log('[Analytics] initialized');
+            } catch (e) {
+              console.warn('[Analytics] failed to init:', e);
+            }
+          }
+        })
+        .catch(() => {});
+    })
+    .catch(() => {});
+}
+
 // Ensure persistent session across reloads and tab restarts
 setPersistence(auth, browserLocalPersistence).catch((err) => {
   console.warn('Failed to set auth persistence:', err);
