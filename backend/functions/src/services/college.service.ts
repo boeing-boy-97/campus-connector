@@ -29,6 +29,8 @@ export const CollegeService = {
   /**
    * Looks up a college by email domain.
    * Returns null if no approved college matches.
+   * In testing mode (ALLOW_ANY_EMAIL_DOMAIN=true), returns a synthetic fallback
+   * college so any email can sign up. This is intentionally NOT default for prod.
    */
   async getByDomain(email: string): Promise<(College & { id: string }) | null> {
     const domain = email.split('@')[1]?.toLowerCase();
@@ -40,8 +42,42 @@ export const CollegeService = {
       .limit(1)
       .get();
 
-    if (snap.empty) return null;
-    return { ...(snap.docs[0].data() as College), id: snap.docs[0].id };
+    if (!snap.empty) {
+      return { ...(snap.docs[0].data() as College), id: snap.docs[0].id };
+    }
+
+    // Testing mode: allow any email domain (user requested "allow_all" for testing)
+    // Set via Cloud Functions env vars: ALLOW_ANY_EMAIL_DOMAIN=true
+    // NEVER enable in production unless you intentionally want open signup.
+    if (process.env.ALLOW_ANY_EMAIL_DOMAIN === 'true') {
+      log.warn(`[TEST MODE] No approved college for domain ${domain} — using synthetic fallback because ALLOW_ANY_EMAIL_DOMAIN=true`);
+      // Try to find or create a generic test college doc for this domain
+      const fallbackId = `test_${domain.replace(/[^a-z0-9]/g, '_')}`;
+      const fallbackRef = db.collection(COLLECTIONS.COLLEGES).doc(fallbackId);
+      const existing = await fallbackRef.get();
+      if (!existing.exists) {
+        // Create a minimal approved college for this domain on-the-fly
+        await fallbackRef.set({
+          name: `${domain.split('.')[0]} Campus (Test)`,
+          short_name: domain.split('.')[0].slice(0, 6).toUpperCase(),
+          domain,
+          logo_url: '',
+          primary_color: '#244c43',
+          secondary_color: '#d8ee6c',
+          city: 'Test City',
+          state: 'Test State',
+          verified_status: CollegeVerifiedStatus.APPROVED,
+          created_at: FieldValue.serverTimestamp(),
+          updated_at: FieldValue.serverTimestamp(),
+          is_test_college: true,
+        });
+        log.info(`Created test college ${fallbackId} for domain ${domain}`);
+      }
+      const data = (await fallbackRef.get()).data() as College;
+      return { ...data, id: fallbackId };
+    }
+
+    return null;
   },
 
   /**

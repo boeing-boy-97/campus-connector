@@ -121,18 +121,27 @@ export function ChatView({ matchId, currentUserId, onBack }: ChatViewProps) {
     }
   }, [matchId]);
 
-  // Load older messages
+  // Load older messages — fixed: previously used startAfter(doc(...)) which is a DocumentReference,
+  // not a DocumentSnapshot, causing Firestore to throw. Now we fetch the snapshot of the oldest
+  // loaded message and paginate correctly. This also ensures we load OLDER messages, not re-load newest.
   const loadOlderMessages = async () => {
     if (!hasMore || loadingOlder || messages.length === 0) return;
     setLoadingOlder(true);
     try {
       const oldestMsg = messages[0];
+      // Fetch the actual snapshot for the oldest message currently in view
+      const oldestSnap = await getDoc(doc(db, 'messages', oldestMsg.id));
+      if (!oldestSnap.exists()) {
+        setHasMore(false);
+        return;
+      }
+
       const olderQuery = query(
         collection(db, 'messages'),
         where('match_id', '==', matchId),
         where('is_deleted', '==', false),
         orderBy('sent_at', 'desc'),
-        startAfter(doc(db, 'messages', oldestMsg.id)),
+        startAfter(oldestSnap),
         limit(MESSAGES_PER_PAGE)
       );
       const { getDocs } = await import('firebase/firestore');
@@ -141,7 +150,7 @@ export function ChatView({ matchId, currentUserId, onBack }: ChatViewProps) {
         id: d.id,
         ...d.data(),
       })) as Message[];
-      olderMsgs.reverse();
+      olderMsgs.reverse(); // Show oldest first in UI
       setMessages((prev) => [...olderMsgs, ...prev]);
       setHasMore(snap.docs.length === MESSAGES_PER_PAGE);
     } catch (e) {

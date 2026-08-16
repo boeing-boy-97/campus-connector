@@ -87,7 +87,11 @@ export function Verification({ profile, onProfileUpdated }: VerificationProps) {
         throw new Error('Please choose a JPG, PNG, or WebP image under 8 MB.');
       }
 
-      const path = `verification_photos/${auth.currentUser.uid}/${crypto.randomUUID()}`;
+      const uniqueId =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+      const path = `verification_photos/${auth.currentUser.uid}/${uniqueId}`;
       await uploadBytes(ref(storage, path), photo, { contentType: photo.type });
 
       const submitPhotoFn = httpsCallable(functions, 'submitVerificationPhoto');
