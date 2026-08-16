@@ -30,6 +30,9 @@
   ],
   "exclude": [
     "lib",
-    "node_modules"
+    "node_modules",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.spec.ts"
   ]
 }

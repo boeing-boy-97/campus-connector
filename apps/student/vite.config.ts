@@ -27,9 +27,13 @@ export default defineConfig({
     // Allow external access for preview environments
     host: '0.0.0.0',
     port: 5173,
+    // Accept any Host header (Vite 6+ blocks non-localhost hosts by default,
+    // which breaks proxied cloud preview URLs)
+    allowedHosts: true,
   },
   preview: {
     host: '0.0.0.0',
     port: 4173,
+    allowedHosts: true,
   },
 })
