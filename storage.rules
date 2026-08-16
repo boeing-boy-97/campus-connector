@@ -12,6 +12,18 @@ service firebase.storage {
         && (request.auth.token.role == 'admin' || request.auth.token.role == 'moderator');
     }
 
+    function isMatchParticipant(matchId) {
+      return isAuth()
+        && (
+          firestore.get(
+            /databases/(default)/documents/matches/$(matchId)
+          ).data.student_a_id == request.auth.uid
+          || firestore.get(
+            /databases/(default)/documents/matches/$(matchId)
+          ).data.student_b_id == request.auth.uid
+        );
+    }
+
     match /verification_photos/{userId}/{allPaths=**} {
       // IDs and uniform photos are sensitive. They are never visible to other students.
       allow read: if isAuth()
@@ -35,11 +47,12 @@ service firebase.storage {
     }
 
     match /chat_media/{matchId}/{allPaths=**} {
-      // Both match participants can read; only authenticated users can upload
-      allow read: if isAuth();
-      allow create: if isAuth()
-        && request.resource.size < 25 * 1024 * 1024;
-      allow delete: if isAuth();
+      // Chat media is private to the two participants in the referenced match.
+      allow read: if isMatchParticipant(matchId);
+      allow create: if isMatchParticipant(matchId)
+        && request.resource.size < 25 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)|video/mp4');
+      allow delete: if isMatchParticipant(matchId);
       allow update: if false;
     }
 

@@ -109,7 +109,8 @@ export async function reviewVerification(requestId: string, action: 'approve' | 
   const vrSnap = await getDoc(doc(db, 'verification_requests', requestId));
   const studentId = vrSnap.data()?.student_id || requestId;
 
-  const result = await reviewVerificationFn({ student_id: studentId, action, notes });
+  // The Cloud Function (verifyPhoto) expects `reason`, not `notes`.
+  const result = await reviewVerificationFn({ student_id: studentId, action, reason: notes });
   return result.data;
 }
 

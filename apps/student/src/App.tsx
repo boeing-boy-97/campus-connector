@@ -171,11 +171,13 @@ export default function App() {
     if (!user || profile?.verification_status !== 'approved') return;
     setCardsLoading(true);
     try {
-      const res = await callFunction<{ recommendations?: StudentProfile[]; students?: StudentProfile[] }>(
+      const res = await callFunction<{ profiles?: StudentProfile[]; recommendations?: StudentProfile[]; students?: StudentProfile[] }>(
         'getRecommendations',
         { page_size: 20 }
       );
-      setCards(res.data.recommendations ?? res.data.students ?? []);
+      // The backend (match.service.getRecommendations) returns `profiles`;
+      // keep the legacy keys as fallbacks for older function deployments.
+      setCards(res.data.profiles ?? res.data.recommendations ?? res.data.students ?? []);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Could not load recommendations.';
       showToast(msg);
