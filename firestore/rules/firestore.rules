@@ -286,6 +286,24 @@ service cloud.firestore {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // OTP RECORDS — written/read only by Cloud Functions
+    // ─────────────────────────────────────────────────────────────────────────
+    match /otp_records/{email} {
+      allow read, write: if false; // Managed entirely by Cloud Functions
+    }
+
+    match /otp_store/{email} {
+      allow read, write: if false; // Managed entirely by Cloud Functions
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // RATE LIMITS — written/read only by Cloud Functions
+    // ─────────────────────────────────────────────────────────────────────────
+    match /rate_limits/{limitId} {
+      allow read, write: if false; // Managed entirely by Cloud Functions
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // DEFAULT DENY — catch-all
     // ─────────────────────────────────────────────────────────────────────────
     match /{document=**} {

@@ -214,6 +214,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /otp_records/{email} {
+      allow read, write: if false;
+    }
+
+    match /otp_store/{email} {
+      allow read, write: if false;
+    }
+
+    match /rate_limits/{limitId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

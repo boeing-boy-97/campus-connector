@@ -78,8 +78,11 @@ export function AuthScreen() {
     await requestOtp(email);
   };
 
+  const [verifying, setVerifying] = useState(false);
+
   const handleVerifyOtp = useCallback(async (otpToVerify: string) => {
-    if (otpToVerify.length !== 6 || busy) return;
+    if (otpToVerify.length !== 6 || verifying) return;
+    setVerifying(true);
     setBusy(true);
     setError('');
 
@@ -98,8 +101,9 @@ export function AuthScreen() {
     } catch (e) {
       setError(formatErrorMessage(e));
       setBusy(false);
+      setVerifying(false);
     }
-  }, [email, busy]);
+  }, [email, verifying]);
 
   const handleResendOtp = async () => {
     if (resendTimer > 0 || busy) return;

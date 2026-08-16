@@ -2,17 +2,29 @@ import { initializeApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
-import { getStorage } from 'firebase/storage';
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyBjVXxjynFHoNdIBh03sMz9tUBQ7CXseKQ',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'campus-connectt.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'campus-connectt',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'campus-connectt.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '594661303702',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:594661303702:web:7e0d90b44d17e0d7dbe9b7',
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-V0ZKW6LDGB',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
+
+// Validate required config
+const missingKeys = Object.entries(firebaseConfig)
+  .filter(([, v]) => !v)
+  .map(([k]) => k);
+
+if (missingKeys.length > 0) {
+  console.error(
+    `Missing Firebase config: ${missingKeys.join(', ')}. ` +
+    'Copy .env.example to .env.local and fill in your Firebase project values.'
+  );
+}
 
 const app = initializeApp(firebaseConfig);
 
@@ -31,5 +43,6 @@ if (import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true') {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
   connectFunctionsEmulator(functions, '127.0.0.1', 5001);
+  connectStorageEmulator(storage, '127.0.0.1', 9199);
 }
 

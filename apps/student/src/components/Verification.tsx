@@ -14,6 +14,11 @@ export type StudentProfile = {
   interests?: string[];
   profile_photos?: string[];
   verification_status?: string;
+  college_id?: string;
+  college_email?: string;
+  gender?: string;
+  intent_flags?: Record<string, boolean>;
+  date_of_birth?: unknown;
 };
 
 interface VerificationProps {

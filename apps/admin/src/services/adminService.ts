@@ -1,6 +1,6 @@
 import { db, reviewVerificationFn, createCollegeFn, approveCollegeFn } from './firebase';
 import {
-  collection, getDocs, query, where, orderBy,
+  collection, getDocs, getDoc, query, where, orderBy,
   limit, doc, updateDoc, Timestamp, getCountFromServer
 } from 'firebase/firestore';
 
@@ -72,14 +72,10 @@ export async function getVerificationQueue() {
   const items = await Promise.all(
     snap.docs.map(async (d) => {
       const vr = d.data();
-      const studentSnap = await getDocs(
-        query(collection(db, 'students'), where('__name__', '==', vr.student_id))
-      );
-      const student = studentSnap.docs[0]?.data() || {};
-      const collegeSnap = await getDocs(
-        query(collection(db, 'colleges'), where('__name__', '==', vr.college_id))
-      );
-      const college = collegeSnap.docs[0]?.data() || {};
+      const studentSnap = await getDoc(doc(db, 'students', vr.student_id));
+      const student = studentSnap.data() || {};
+      const collegeSnap = await getDoc(doc(db, 'colleges', vr.college_id));
+      const college = collegeSnap.data() || {};
 
       return {
         id: d.id,
@@ -108,7 +104,12 @@ export async function getVerificationQueue() {
 
 // ── Review Verification ────────────────────────────────────────────────────────
 export async function reviewVerification(requestId: string, action: 'approve' | 'reject', notes?: string) {
-  const result = await reviewVerificationFn({ request_id: requestId, action, notes });
+  // The backend function expects student_id, not request_id
+  // We need to look up the student_id from the verification request
+  const vrSnap = await getDoc(doc(db, 'verification_requests', requestId));
+  const studentId = vrSnap.data()?.student_id || requestId;
+
+  const result = await reviewVerificationFn({ student_id: studentId, action, notes });
   return result.data;
 }
 

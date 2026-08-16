@@ -3,6 +3,10 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
+    function isAuth() {
+      return request.auth != null;
+    }
+
     function isModerator() {
       return request.auth != null
         && (request.auth.token.role == 'admin' || request.auth.token.role == 'moderator');
@@ -10,13 +14,33 @@ service firebase.storage {
 
     match /verification_photos/{userId}/{allPaths=**} {
       // IDs and uniform photos are sensitive. They are never visible to other students.
-      allow read: if request.auth != null
+      allow read: if isAuth()
         && (request.auth.uid == userId || isModerator());
-      allow create: if request.auth != null
+      allow create: if isAuth()
         && request.auth.uid == userId
         && request.resource.size < 8 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)');
       allow update, delete: if false;
+    }
+
+    match /profile_photos/{userId}/{allPaths=**} {
+      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isAuth()
+        && request.auth.uid == userId;
+      allow update: if false;
+    }
+
+    match /chat_media/{matchId}/{allPaths=**} {
+      // Both match participants can read; only authenticated users can upload
+      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.resource.size < 25 * 1024 * 1024;
+      allow delete: if isAuth();
+      allow update: if false;
     }
 
     match /{allPaths=**} {
