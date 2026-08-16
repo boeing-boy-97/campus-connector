@@ -24,23 +24,26 @@ export default function LoginPage() {
         password
       );
 
-      // TEMP ADMIN CHECK
-      const allowedAdmins = [
-        'vedant.test@gmail.com'
-      ];
+      // Verify admin role via Firebase custom claims
+      const idTokenResult = await credential.user.getIdTokenResult();
+      const role = idTokenResult.claims.role;
 
-      const userEmail = credential.user.email || '';
-
-      if (!allowedAdmins.includes(userEmail)) {
+      if (role !== 'admin' && role !== 'moderator') {
         await signOut(auth);
-        setError('Access denied. Admin account required.');
+        setError('Access denied. Admin or moderator account required.');
         return;
       }
 
       navigate('/dashboard');
     } catch (err: any) {
       console.error(err);
-      setError('Invalid credentials. Please try again.');
+      if (err?.code === 'auth/invalid-credential' || err?.code === 'auth/user-not-found') {
+        setError('Invalid credentials. Please try again.');
+      } else if (err?.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Please try again later.');
+      } else {
+        setError('Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

@@ -2,29 +2,38 @@ import { initializeApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth";
 import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { getFunctions, httpsCallable, connectFunctionsEmulator } from "firebase/functions";
-import { getAnalytics } from "firebase/analytics";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBjVXxjynFHoNdIBh03sMz9tUBQ7CXseKQ",
-  authDomain: "campus-connectt.firebaseapp.com",
-  projectId: "campus-connectt",
-  storageBucket: "campus-connectt.firebasestorage.app",
-  messagingSenderId: "594661303702",
-  appId: "1:594661303702:web:7e0d90b44d17e0d7dbe9b7",
-  measurementId: "G-V0ZKW6LDGB",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
+
+// Validate required config
+const missingKeys = Object.entries(firebaseConfig)
+  .filter(([, v]) => !v)
+  .map(([k]) => k);
+
+if (missingKeys.length > 0) {
+  console.error(
+    `Missing Firebase config: ${missingKeys.join(', ')}. ` +
+    'Copy .env.example to .env and fill in your Firebase project values.'
+  );
+}
 
 // Initialize Firebase ONCE
 const app = initializeApp(firebaseConfig);
 
-export const analytics = getAnalytics(app);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const functions = getFunctions(app, "asia-south1");
 
-/*
 // Enable emulators during local development
-if (import.meta.env.DEV) {
+if (import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true') {
   try {
     connectAuthEmulator(auth, "http://localhost:9099", {
       disableWarnings: true,
@@ -35,7 +44,6 @@ if (import.meta.env.DEV) {
     // Ignore HMR reload errors
   }
 }
-*/
 
 // Callable functions
 export const reviewVerificationFn = httpsCallable(

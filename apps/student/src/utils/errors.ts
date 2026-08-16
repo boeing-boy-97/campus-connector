@@ -16,6 +16,40 @@ export function formatErrorMessage(error: unknown): string {
     return 'Unable to connect. Please check your internet connection and try again.';
   }
 
+  // Google Auth errors
+  if (code === 'auth/popup-closed-by-user') {
+    return ''; // User intentionally closed — no error needed
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'Pop-up was blocked by your browser. Please allow pop-ups and try again.';
+  }
+  if (code === 'auth/cancelled-popup-request') {
+    return '';
+  }
+  if (code === 'auth/account-exists-with-different-credential') {
+    return 'An account already exists with this email using a different sign-in method. Try signing in with email.';
+  }
+  if (code === 'auth/credential-already-in-use') {
+    return 'This credential is already associated with another account.';
+  }
+
+  // Phone Auth errors
+  if (code === 'auth/invalid-phone-number') {
+    return 'Invalid phone number. Please include your country code (e.g. +91).';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Too many attempts. Please wait a few minutes before trying again.';
+  }
+  if (code === 'auth/invalid-verification-code') {
+    return 'Incorrect code. Please check and try again.';
+  }
+  if (code === 'auth/code-expired') {
+    return 'Verification code expired. Please request a new one.';
+  }
+  if (code === 'auth/quota-exceeded') {
+    return 'SMS quota exceeded. Please try again later or use email sign-in.';
+  }
+
   // OTP & Domain Error codes
   if (code === 'auth/invalid-domain' || message.includes('domain is not registered')) {
     return 'This email domain is not registered. Please use your official college institutional email.';

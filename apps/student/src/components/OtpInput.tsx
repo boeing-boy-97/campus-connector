@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 
 interface OtpInputProps {
   value: string;
@@ -16,6 +16,8 @@ export function OtpInput({
   length = 6,
 }: OtpInputProps) {
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   const digits = value.split('').concat(Array(length - value.length).fill(''));
 
@@ -25,6 +27,8 @@ export function OtpInput({
     if (inputRefs.current[firstEmptyIndex] && !disabled) {
       inputRefs.current[firstEmptyIndex]?.focus();
     }
+    // Only run on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
@@ -41,8 +45,8 @@ export function OtpInput({
       inputRefs.current[index + 1]?.focus();
     }
 
-    if (newOtp.length === length && onComplete) {
-      onComplete(newOtp);
+    if (newOtp.length === length && onCompleteRef.current) {
+      onCompleteRef.current(newOtp);
     }
   };
 
@@ -74,8 +78,8 @@ export function OtpInput({
     const nextFocusIndex = Math.min(pastedData.length, length - 1);
     inputRefs.current[nextFocusIndex]?.focus();
 
-    if (pastedData.length === length && onComplete) {
-      onComplete(pastedData);
+    if (pastedData.length === length && onCompleteRef.current) {
+      onCompleteRef.current(pastedData);
     }
   };
 

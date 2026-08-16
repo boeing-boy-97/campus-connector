@@ -17,6 +17,7 @@ import './config/firebase';
 export { sendOtp }     from './functions/auth/sendOtp';
 export { verifyOtp }   from './functions/auth/verifyOtp';
 export { login }       from './functions/auth/login';
+export { loginWithGoogle } from './functions/auth/loginWithGoogle';
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 export { createProfile }  from './functions/users/createProfile';
