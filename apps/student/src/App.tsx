@@ -3,7 +3,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { auth, db, functions } from './services/firebase';
+import { auth, db, functions, firebaseConfigError } from './services/firebase';
 import { AuthScreen } from './components/AuthScreen';
 import { Verification } from './components/Verification';
 import type { StudentProfile } from './components/Verification';
@@ -15,6 +15,33 @@ import { InboxView, type NoticeItem } from './components/InboxView';
 import { ProfileView } from './components/ProfileView';
 import { Avatar } from './components/Avatar';
 import { ErrorBoundary } from './components/ErrorBoundary';
+
+function ConfigErrorScreen({ error }: { error: string }) {
+  return (
+    <div className="error-boundary-fallback">
+      <div className="brand-mark">C</div>
+      <h2>Configuration Error</h2>
+      <p style={{ maxWidth: 560, textAlign: 'center', lineHeight: 1.6 }}>
+        {error}
+      </p>
+      <p style={{ maxWidth: 560, textAlign: 'center', fontSize: 14, opacity: 0.8 }}>
+        This happens when Vercel environment variables are missing. Add the{' '}
+        <code>VITE_FIREBASE_*</code> variables in Vercel → Settings → Environment Variables and redeploy.
+        See <code>apps/student/README.md</code> for the full checklist.
+      </p>
+      <div className="error-actions">
+        <button className="primary" onClick={() => window.location.reload()} style={{ width: 'auto' }}>
+          Reload
+        </button>
+      </div>
+      {import.meta.env.DEV && (
+        <pre className="error-details" style={{ maxWidth: 700, whiteSpace: 'pre-wrap' }}>
+          {error}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 type View = 'discover' | 'connections' | 'requests' | 'inbox' | 'profile' | 'chat';
 
@@ -33,6 +60,11 @@ const callFunction = async <T,>(name: string, data?: object): Promise<{ data: T 
 };
 
 export default function App() {
+  // If Firebase config is missing, render a helpful error instead of blank screen.
+  if (firebaseConfigError) {
+    return <ConfigErrorScreen error={firebaseConfigError} />;
+  }
+
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [view, setView] = useState<View>('discover');

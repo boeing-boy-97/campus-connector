@@ -4,7 +4,7 @@ import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 
-const firebaseConfig = {
+const rawFirebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -18,29 +18,47 @@ const firebaseConfig = {
 // NOTE: these values are compiled into the bundle from VITE_FIREBASE_* env vars
 // (e.g. Vercel project → Settings → Environment Variables). They must point to
 // the SAME Firebase project that hosts the Cloud Functions (region asia-south1).
-// We check the resolved `firebaseConfig` object (not `import.meta.env[key]`)
-// because Vite only statically replaces direct `import.meta.env.VITE_*` access.
+// We check the resolved object (not `import.meta.env[key]`) because Vite only
+// statically replaces direct `import.meta.env.VITE_*` access.
 const requiredConfigEntries: Array<[envKey: string, value: string | undefined]> = [
-  ['VITE_FIREBASE_API_KEY', firebaseConfig.apiKey],
-  ['VITE_FIREBASE_AUTH_DOMAIN', firebaseConfig.authDomain],
-  ['VITE_FIREBASE_PROJECT_ID', firebaseConfig.projectId],
-  ['VITE_FIREBASE_STORAGE_BUCKET', firebaseConfig.storageBucket],
-  ['VITE_FIREBASE_MESSAGING_SENDER_ID', firebaseConfig.messagingSenderId],
-  ['VITE_FIREBASE_APP_ID', firebaseConfig.appId],
+  ['VITE_FIREBASE_API_KEY', rawFirebaseConfig.apiKey],
+  ['VITE_FIREBASE_AUTH_DOMAIN', rawFirebaseConfig.authDomain],
+  ['VITE_FIREBASE_PROJECT_ID', rawFirebaseConfig.projectId],
+  ['VITE_FIREBASE_STORAGE_BUCKET', rawFirebaseConfig.storageBucket],
+  ['VITE_FIREBASE_MESSAGING_SENDER_ID', rawFirebaseConfig.messagingSenderId],
+  ['VITE_FIREBASE_APP_ID', rawFirebaseConfig.appId],
 ];
 
 const missingKeys = requiredConfigEntries
   .filter(([, value]) => !value)
   .map(([envKey]) => envKey);
 
-if (missingKeys.length > 0) {
-  throw new Error(
-    `Missing Firebase config: ${missingKeys.join(', ')}. ` +
+// Exported for UI to render a helpful error instead of crashing to a blank page.
+// Previously this file threw synchronously, leaving only the index.html splash "C".
+export const firebaseConfigError = missingKeys.length > 0
+  ? `Missing Firebase config: ${missingKeys.join(', ')}. ` +
     'Set these in the student app environment (locally in .env.local, or in ' +
     'Vercel → Settings → Environment Variables). They must point to the same ' +
-    'Firebase project as the Cloud Functions (asia-south1). See apps/student/README.md.',
-  );
+    'Firebase project as the Cloud Functions (asia-south1). See apps/student/README.md.'
+  : null;
+
+if (firebaseConfigError) {
+  // Do not throw — allow the app to mount and show a meaningful error screen.
+  // Logging here is critical for Vercel production debugging.
+  console.error('[Firebase config error]', firebaseConfigError);
 }
+
+// Use safe fallback values so initializeApp does not itself throw when env vars are missing.
+// The app will still render an error UI via firebaseConfigError check in App.tsx and ErrorBoundary.
+const firebaseConfig = {
+  apiKey: rawFirebaseConfig.apiKey || 'missing-api-key-please-set-env',
+  authDomain: rawFirebaseConfig.authDomain || 'missing.firebaseapp.com',
+  projectId: rawFirebaseConfig.projectId || 'missing-project-id',
+  storageBucket: rawFirebaseConfig.storageBucket || 'missing.appspot.com',
+  messagingSenderId: rawFirebaseConfig.messagingSenderId || '000000000000',
+  appId: rawFirebaseConfig.appId || '1:000000000000:web:missingappid',
+  measurementId: rawFirebaseConfig.measurementId,
+};
 
 const app = initializeApp(firebaseConfig);
 

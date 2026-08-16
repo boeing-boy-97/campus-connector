@@ -5,10 +5,11 @@
   "private": true,
   "workspaces": [
     "apps/admin",
+    "apps/student",
     "backend/functions"
   ],
   "scripts": {
-    "install:all": "npm install && cd apps/admin && npm install && cd ../../backend/functions && npm install",
+    "install:all": "npm install && npm --prefix apps/admin install && npm --prefix apps/student install && npm --prefix backend/functions install",
     "build:functions": "cd backend/functions && npm run build",
     "build:admin": "cd apps/admin && npm run build",
     "build:student": "npm --prefix apps/student run build",

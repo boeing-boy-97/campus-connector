@@ -32,24 +32,35 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       if (this.props.fallback) return this.props.fallback;
 
+      const msg = this.state.error?.message || '';
+      const isConfigError =
+        msg.includes('Missing Firebase config') || msg.includes('VITE_FIREBASE');
+
       return (
         <div className="error-boundary-fallback">
           <div className="brand-mark">C</div>
-          <h2>Something went wrong</h2>
+          <h2>{isConfigError ? 'Configuration Error' : 'Something went wrong'}</h2>
           <p>
-            An unexpected error occurred. This has been logged and we're looking into it.
+            {isConfigError
+              ? msg
+              : 'An unexpected error occurred. This has been logged and we\'re looking into it.'}
           </p>
-          {import.meta.env.DEV && this.state.error && (
+          {!isConfigError && import.meta.env.DEV && this.state.error && (
             <pre className="error-details">{this.state.error.message}</pre>
           )}
+          {isConfigError && (
+            <p style={{ maxWidth: 560, fontSize: 14, opacity: 0.85, textAlign: 'center' }}>
+              Add the <code>VITE_FIREBASE_*</code> variables in Vercel → Settings → Environment
+              Variables and redeploy. See <code>apps/student/README.md</code>.
+            </p>
+          )}
           <div className="error-actions">
-            <button className="primary" onClick={this.handleReset} style={{ width: 'auto' }}>
-              Try again
-            </button>
-            <button
-              className="secondary"
-              onClick={() => window.location.reload()}
-            >
+            {!isConfigError && (
+              <button className="primary" onClick={this.handleReset} style={{ width: 'auto' }}>
+                Try again
+              </button>
+            )}
+            <button className="secondary" onClick={() => window.location.reload()}>
               Reload page
             </button>
           </div>
