@@ -5,10 +5,11 @@
   "private": true,
   "workspaces": [
     "apps/admin",
+    "apps/student",
     "backend/functions"
   ],
   "scripts": {
-    "install:all": "npm install && cd apps/admin && npm install && cd ../../backend/functions && npm install",
+    "install:all": "npm install && npm --prefix apps/admin install && npm --prefix apps/student install && npm --prefix backend/functions install",
     "build:functions": "cd backend/functions && npm run build",
     "build:admin": "cd apps/admin && npm run build",
     "build:student": "npm --prefix apps/student run build",
@@ -21,7 +22,7 @@
     "deploy:rules": "firebase deploy --only firestore:rules,storage:rules",
     "deploy:admin": "firebase deploy --only hosting",
     "test:functions": "cd backend/functions && npm test",
-    "test:rules": "firebase emulators:exec --only firestore,storage 'cd backend/functions && npm run test:rules'",
+    "test:rules": "echo \"No Firestore rules tests defined yet — see https://firebase.google.com/docs/rules/unit-tests\"",
     "lint:student": "npm --prefix apps/student run lint",
     "lint": "npm --prefix apps/admin run lint && npm --prefix backend/functions run lint && npm run lint:student",
     "seed": "cd scripts/seed-data && npx ts-node seed.ts"

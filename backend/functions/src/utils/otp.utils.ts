@@ -3,6 +3,7 @@
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 import * as bcrypt from 'bcryptjs';
+import { randomInt } from 'crypto';
 import { createLogger } from './logger';
 
 const log = createLogger('otp.utils');
@@ -23,9 +24,6 @@ export interface OtpRecord {
 export function generateOtp(): string {
   const digits = '0123456789';
   let otp = '';
-  // Use Math.random only for demonstration in emulator;
-  // In production, use crypto.getRandomValues via the Node crypto module
-  const { randomInt } = require('crypto');
   for (let i = 0; i < OTP_LENGTH; i++) {
     otp += digits[randomInt(0, 10)];
   }

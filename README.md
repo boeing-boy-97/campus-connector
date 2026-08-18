@@ -193,11 +193,41 @@ cd apps/mobile && flutter test
 # Cloud Functions tests
 cd backend/functions && npm test
 
-# Firestore rules tests
-firebase emulators:exec --only firestore "npm run test:rules"
+# Firestore rules tests — none defined yet
+# (see https://firebase.google.com/docs/rules/unit-tests to add them)
 ```
 
 ---
+
+## ⚙️ Production Configuration
+
+Before going live, make sure these are configured (they are the most common
+causes of "login works in dev but not production"):
+
+1. **SMTP for OTP emails.** The `sendOtp` function reads `SMTP_HOST`,
+   `SMTP_PORT`, `SMTP_USER`, and `SMTP_PASS` from runtime environment variables
+   first, then falls back to `firebase functions:config:set smtp.*`. Set them on
+   the deployed function (GCP console → Functions → `sendOtp` → Runtime
+   environment variables, or `gcloud --set-env-vars`, or Firebase Secrets). See
+   [SETUP_OTP_EMAIL.md](SETUP_OTP_EMAIL.md).
+
+   > ⚠️ `firebase functions:config:set` does **not** populate `process.env` — the
+   > code reads `functions.config()` explicitly as a fallback.
+
+2. **Student web app → Vercel.** The student app gets its Firebase config entirely
+   from `VITE_FIREBASE_*` env vars. They must point to the **same** Firebase
+   project that hosts the Cloud Functions (`asia-south1`). Full checklist in
+   [apps/student/README.md](apps/student/README.md).
+
+3. **Approved college data.** OTP and Google login both require an *approved*
+   college whose `domain` matches the email (e.g. `student@xyzcollege.edu.in` →
+   `domain: "xyzcollege.edu.in"`, `verified_status: "approved"`). Add/approve
+   colleges from the Admin panel → Colleges, or seed development data with
+   `npm run seed`.
+
+4. **Phone login is disabled.** Firebase phone auth alone cannot provision a
+   student account (no college context / custom claims / profile), so the
+   student web app only offers College email and Google sign-in.
 
 ## 🌐 Deploying
 
