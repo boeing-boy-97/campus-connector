@@ -29,7 +29,6 @@ async function deliverOtp(email: string, otp: string, collegeName: string): Prom
       pass: smtpConfig.pass,
     },
     tls: {
-      ciphers: 'SSLv3',
       rejectUnauthorized: true,
     },
   });

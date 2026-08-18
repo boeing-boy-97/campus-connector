@@ -67,8 +67,10 @@ export const createProfile = functions
       // Age validation (18+)
       const dob = parseDateOfBirth(parsed.date_of_birth);
       const today = new Date();
-      const age = today.getUTCFullYear() - dob.getUTCFullYear()
-        - (Number(`${today.getUTCMonth() + 1}${today.getUTCDate()}`) < Number(`${dob.getUTCMonth() + 1}${dob.getUTCDate()}`) ? 1 : 0);
+      const hasHadBirthdayThisYear =
+        today.getUTCMonth() > dob.getUTCMonth() ||
+        (today.getUTCMonth() === dob.getUTCMonth() && today.getUTCDate() >= dob.getUTCDate());
+      const age = today.getUTCFullYear() - dob.getUTCFullYear() - (hasHadBirthdayThisYear ? 0 : 1);
 
       if (age < BUSINESS_RULES.MIN_AGE) {
         throw Errors.preconditionFailed(

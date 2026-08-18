@@ -2,6 +2,7 @@
 // ║  rateLimit.middleware.ts — Token bucket rate limiter (Firestore-backed)  ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
+import * as functions from 'firebase-functions';
 import { db, FieldValue } from '../config/firebase';
 import { Errors } from '../utils/errors';
 import { createLogger } from '../utils/logger';
@@ -72,7 +73,7 @@ export async function checkRateLimit(config: RateLimitConfig): Promise<void> {
     });
   } catch (error: any) {
     // Re-throw HttpsErrors directly
-    if (error?.httpErrorCode) throw error;
+    if (error instanceof functions.https.HttpsError || error?.code) throw error;
     // Transaction conflicts are transient — don't block the request
     log.warn(`Rate limit transaction conflict for ${key}:`, error);
   }

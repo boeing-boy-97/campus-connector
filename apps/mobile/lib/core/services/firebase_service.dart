@@ -69,8 +69,16 @@ class FirebaseService {
     return Map<String, dynamic>.from(result.data);
   }
 
-  static Future<Map<String, dynamic>> deleteAccount() async {
-    final result = await _functions.httpsCallable('deleteAccount').call();
+  static Future<Map<String, dynamic>> deleteAccount({
+    String confirmation = 'DELETE MY ACCOUNT',
+    String? reason,
+    String? feedback,
+  }) async {
+    final result = await _functions.httpsCallable('deleteAccount').call({
+      'confirmation': confirmation,
+      if (reason != null) 'reason': reason,
+      if (feedback != null) 'feedback': feedback,
+    });
     return Map<String, dynamic>.from(result.data);
   }
 
