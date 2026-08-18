@@ -15,8 +15,8 @@ export default function VerificationPage() {
   });
 
   const { mutate: review, isPending: reviewing } = useMutation({
-    mutationFn: ({ id, action, notes }: { id: string; action: 'approve' | 'reject'; notes?: string }) =>
-      reviewVerification(id, action, notes),
+    mutationFn: ({ studentId, action, notes }: { studentId: string; action: 'approve' | 'reject'; notes?: string }) =>
+      reviewVerification(studentId, action, notes),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['verification-queue'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
@@ -32,7 +32,7 @@ export default function VerificationPage() {
       alert('Please provide a reason for rejection.');
       return;
     }
-    review({ id: selected.id, action, notes: notes.trim() || undefined });
+    review({ studentId: selected.student_id, action, notes: notes.trim() || undefined });
   };
 
   return (

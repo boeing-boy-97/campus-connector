@@ -2,19 +2,16 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-
     function isModerator() {
       return request.auth != null
         && (request.auth.token.role == 'admin' || request.auth.token.role == 'moderator');
     }
 
     match /verification_photos/{userId}/{allPaths=**} {
-      // IDs and uniform photos are sensitive. They are never visible to other students.
-      allow read: if request.auth != null
-        && (request.auth.uid == userId || isModerator());
+      allow read: if request.auth != null && (request.auth.uid == userId || isModerator());
       allow create: if request.auth != null
         && request.auth.uid == userId
-        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.size <= 5 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)');
       allow update, delete: if false;
     }

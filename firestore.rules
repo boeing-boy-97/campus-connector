@@ -1,15 +1,7 @@
 rules_version = '2';
 
-// ╔══════════════════════════════════════════════════════════════════════════╗
-// ║         CAMPUS CONNECT — FIRESTORE SECURITY RULES                       ║
-// ║                                                                          ║
-// ║  CRITICAL: college_id isolation is enforced HERE at DB layer.           ║
-// ║  Role hierarchy: admin > moderator > student                            ║
-// ╚══════════════════════════════════════════════════════════════════════════╝
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -19,7 +11,7 @@ service cloud.firestore {
     }
 
     function tokenRole() {
-      return request.auth.token.get('role', 'student');
+      return request.auth.token.role;
     }
 
     function isAdmin() {
@@ -30,29 +22,31 @@ service cloud.firestore {
       return isAuthenticated() && (tokenRole() == 'admin' || tokenRole() == 'moderator');
     }
 
-    function isStudent() {
-      return isAuthenticated() && tokenRole() == 'student';
-    }
-
     function isSelf(userId) {
       return isAuthenticated() && uid() == userId;
     }
 
     function getMyProfile() {
-      return get(/databases/$(database)/documents/students/$(uid())).data;
+      return exists(/databases/$(database)/documents/students/$(uid()))
+        ? get(/databases/$(database)/documents/students/$(uid())).data
+        : null;
     }
 
     function getStudentDoc(studentId) {
-      return get(/databases/$(database)/documents/students/$(studentId)).data;
+      return exists(/databases/$(database)/documents/students/$(studentId))
+        ? get(/databases/$(database)/documents/students/$(studentId)).data
+        : null;
     }
 
     function sameCollege(targetCollegeId) {
       return isAuthenticated()
+        && getMyProfile() != null
         && getMyProfile().college_id == targetCollegeId;
     }
 
     function isVerified() {
       return isAuthenticated()
+        && getMyProfile() != null
         && getMyProfile().verification_status == 'approved';
     }
 
@@ -65,8 +59,12 @@ service cloud.firestore {
       return field is string && field.size() <= maxLen;
     }
 
-    function matchExists(matchId) {
-      return exists(/databases/$(database)/documents/matches/$(matchId));
+    function hasAllowedStudentFields(data) {
+      return data.keys().hasAll(['college_id', 'college_email', 'full_name', 'verification_status', 'created_at'])
+        && data.college_id is string
+        && data.college_email is string
+        && data.full_name is string
+        && data.verification_status == 'pending';
     }
 
     match /colleges/{collegeId} {
@@ -79,92 +77,84 @@ service cloud.firestore {
     match /students/{studentId} {
       allow read: if isSelf(studentId)
         || isAdmin()
-        || (isVerified()
-            && sameCollege(resource.data.college_id)
-            && resource.data.verification_status == 'approved');
+        || (
+          isAuthenticated()
+          && getMyProfile() != null
+          && getStudentDoc(studentId) != null
+          && getMyProfile().verification_status == 'approved'
+          && getStudentDoc(studentId).verification_status == 'approved'
+          && getMyProfile().college_id == getStudentDoc(studentId).college_id
+        );
 
       allow create: if isSelf(studentId)
-        && request.resource.data.keys().hasAll([
-          'college_id', 'college_email', 'full_name',
-          'verification_status', 'created_at'
-        ])
-        && request.resource.data.verification_status == 'pending'
+        && hasAllowedStudentFields(request.resource.data)
         && validString(request.resource.data.full_name, 100)
-        && validString(request.resource.data.bio, 500);
+        && (request.resource.data.bio == null || validString(request.resource.data.bio, 500));
 
       allow update: if isAdmin()
-        || (isSelf(studentId)
-            && request.resource.data.college_id == resource.data.college_id
-            && request.resource.data.college_email == resource.data.college_email
-            && request.resource.data.verification_status == resource.data.verification_status
-            && validString(request.resource.data.bio, 500)
-            && validString(request.resource.data.full_name, 100));
+        || (
+          isSelf(studentId)
+          && request.resource.data.college_id == resource.data.college_id
+          && request.resource.data.college_email == resource.data.college_email
+          && request.resource.data.verification_status == resource.data.verification_status
+          && validString(request.resource.data.full_name, 100)
+          && (request.resource.data.bio == null || validString(request.resource.data.bio, 500))
+        );
 
       allow delete: if isAdmin();
     }
 
     match /verification_requests/{requestId} {
-      allow read: if isModerator()
-        || (isAuthenticated() && resource.data.student_id == uid());
-
+      allow read: if isModerator() || (isAuthenticated() && resource.data.student_id == uid());
       allow create: if isAuthenticated()
         && request.resource.data.student_id == uid()
-        && request.resource.data.review_status == 'pending';
-
+        && request.resource.data.review_status == 'pending'
+        && request.resource.data.submitted_at is timestamp;
       allow update: if isModerator();
       allow delete: if false;
     }
 
     match /connect_requests/{requestId} {
-      allow read: if isAuthenticated()
-        && (resource.data.from_id == uid() || resource.data.to_id == uid());
-
+      allow read: if isAuthenticated() && (resource.data.from_id == uid() || resource.data.to_id == uid());
       allow create: if isVerified()
         && request.resource.data.from_id == uid()
-        && sameCollege(getStudentDoc(request.resource.data.to_id).college_id)
+        && request.resource.data.to_id != uid()
+        && request.resource.data.status == 'pending'
+        && getStudentDoc(request.resource.data.to_id) != null
+        && getMyProfile().college_id == getStudentDoc(request.resource.data.to_id).college_id
         && notBlocked(uid(), request.resource.data.to_id);
-
-      allow update: if isAuthenticated()
-        && resource.data.to_id == uid();
-
-      allow delete: if isAuthenticated()
-        && resource.data.from_id == uid();
+      allow update: if isAuthenticated() && resource.data.to_id == uid();
+      allow delete: if isAuthenticated() && resource.data.from_id == uid();
     }
 
     match /matches/{matchId} {
-      allow read: if isAdmin()
-        || (isAuthenticated()
-            && (resource.data.student_a_id == uid()
-                || resource.data.student_b_id == uid()));
-
+      allow read: if isAdmin() || (isAuthenticated() && (resource.data.student_a_id == uid() || resource.data.student_b_id == uid()));
       allow create: if false;
-
       allow update: if isAuthenticated()
         && (resource.data.student_a_id == uid() || resource.data.student_b_id == uid())
         && request.resource.data.status == 'unmatched'
         && request.resource.data.student_a_id == resource.data.student_a_id
         && request.resource.data.student_b_id == resource.data.student_b_id;
-
       allow delete: if false;
     }
 
     match /messages/{messageId} {
       allow read: if isAuthenticated() && (
-        resource.data.sender_id == uid()
-        || exists(/databases/$(database)/documents/matches/$(resource.data.match_id))
-        && (
-          get(/databases/$(database)/documents/matches/$(resource.data.match_id)).data.student_a_id == uid()
-          || get(/databases/$(database)/documents/matches/$(resource.data.match_id)).data.student_b_id == uid()
+        resource.data.sender_id == uid() || (
+          exists(/databases/$(database)/documents/matches/$(resource.data.match_id)) && (
+            get(/databases/$(database)/documents/matches/$(resource.data.match_id)).data.student_a_id == uid() ||
+            get(/databases/$(database)/documents/matches/$(resource.data.match_id)).data.student_b_id == uid()
+          )
         )
       );
 
       allow create: if isVerified()
         && request.resource.data.sender_id == uid()
-        && matchExists(request.resource.data.match_id)
+        && exists(/databases/$(database)/documents/matches/$(request.resource.data.match_id))
         && get(/databases/$(database)/documents/matches/$(request.resource.data.match_id)).data.status == 'active'
         && (
-          get(/databases/$(database)/documents/matches/$(request.resource.data.match_id)).data.student_a_id == uid()
-          || get(/databases/$(database)/documents/matches/$(request.resource.data.match_id)).data.student_b_id == uid()
+          get(/databases/$(database)/documents/matches/$(request.resource.data.match_id)).data.student_a_id == uid() ||
+          get(/databases/$(database)/documents/matches/$(request.resource.data.match_id)).data.student_b_id == uid()
         )
         && validString(request.resource.data.text, 2000);
 
@@ -177,30 +167,22 @@ service cloud.firestore {
     }
 
     match /reports/{reportId} {
-      allow read: if isModerator()
-        || (isAuthenticated() && resource.data.reporter_id == uid());
-
+      allow read: if isModerator() || (isAuthenticated() && resource.data.reporter_id == uid());
       allow create: if isVerified()
         && request.resource.data.reporter_id == uid()
         && request.resource.data.reported_id != uid()
         && request.resource.data.status == 'pending'
         && validString(request.resource.data.reason, 1000);
-
       allow update: if isModerator();
       allow delete: if false;
     }
 
     match /blocks/{blockId} {
-      allow read: if isAuthenticated()
-        && (resource.data.blocker_id == uid() || resource.data.blocked_id == uid());
-
+      allow read: if isAuthenticated() && (resource.data.blocker_id == uid() || resource.data.blocked_id == uid());
       allow create: if isVerified()
         && request.resource.data.blocker_id == uid()
         && request.resource.data.blocked_id != uid();
-
-      allow delete: if isAuthenticated()
-        && resource.data.blocker_id == uid();
-
+      allow delete: if isAuthenticated() && resource.data.blocker_id == uid();
       allow update: if false;
     }
 

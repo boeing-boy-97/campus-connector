@@ -1,7 +1,3 @@
-// ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  sendOtp — Full production implementation                               ║
-// ╚══════════════════════════════════════════════════════════════════════════╝
-
 import * as functions from 'firebase-functions';
 import nodemailer from 'nodemailer';
 import { z } from 'zod';
@@ -16,41 +12,44 @@ import { CollegeService } from '../../services/college.service';
 
 const log = createLogger('sendOtp');
 
-async function deliverOtp(email: string, otp: string, collegeName: string): Promise<void> {
-  // Direct SMTP configuration - prioritize environment variables for reliability
-  const smtpConfig = {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_PORT === '465', // true if port 465, false for 587
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS?.replace(/\s+/g, ''),
-    },
-  };
+const smtpConfig = {
+  host: process.env.SMTP_HOST || (functions.config().smtp && functions.config().smtp.host) || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT || (functions.config().smtp && functions.config().smtp.port) || '587'),
+  user: process.env.SMTP_USER || (functions.config().smtp && functions.config().smtp.user) || '',
+  pass: process.env.SMTP_PASS ? process.env.SMTP_PASS.replace(/\s+/g, '') : ((functions.config().smtp && functions.config().smtp.pass) || '').replace(/\s+/g, ''),
+};
 
-  // Validate SMTP credentials are present
-  if (!smtpConfig.auth.user || !smtpConfig.auth.pass) {
+async function deliverOtp(email: string, otp: string, collegeName: string): Promise<void> {
+  const transporter = nodemailer.createTransport({
+    host: smtpConfig.host,
+    port: smtpConfig.port,
+    secure: smtpConfig.port === 465,
+    auth: {
+      user: smtpConfig.user,
+      pass: smtpConfig.pass,
+    },
+    tls: {
+      ciphers: 'SSLv3',
+      rejectUnauthorized: true,
+    },
+  });
+
+  if (!smtpConfig.user || !smtpConfig.pass) {
     log.error('SMTP credentials not configured', {
       host: smtpConfig.host,
       port: smtpConfig.port,
-      user: smtpConfig.auth.user ? '***' : 'MISSING',
-      pass: smtpConfig.auth.pass ? '***' : 'MISSING',
+      user: smtpConfig.user ? '***' : 'MISSING',
+      pass: smtpConfig.pass ? '***' : 'MISSING',
     });
-    throw Errors.preconditionFailed(
-      'Email service not configured. Contact admin.'
-    );
+    throw Errors.preconditionFailed('Email service not configured. Contact admin.');
   }
 
   try {
-    const transporter = nodemailer.createTransport(smtpConfig);
-
-    // Test connection
     await transporter.verify();
-    log.info(`SMTP connection verified for ${smtpConfig.auth.user}`);
+    log.info(`SMTP connection verified for ${smtpConfig.user}`);
 
-    // Send email
     const info = await transporter.sendMail({
-      from: smtpConfig.auth.user,
+      from: `"Campus Connector" <${smtpConfig.user}>`,
       to: email,
       subject: `Your ${collegeName} Campus Connector Code: ${otp}`,
       html: `
@@ -71,15 +70,10 @@ async function deliverOtp(email: string, otp: string, collegeName: string): Prom
       messageId: info.messageId,
       response: info.response,
     });
-  } catch (error: any) {
-    log.error(`Failed to send OTP to ${email}`, {
-      error: error.message,
-      code: error.code,
-      command: error.command,
-    });
-    throw Errors.internal(
-      `Email delivery failed: ${error.message}`
-    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown SMTP error';
+    log.error(`Failed to send OTP to ${email}`, { error: message });
+    throw Errors.internal(`Email delivery failed: ${message}`);
   }
 }
 
@@ -98,13 +92,10 @@ export const sendOtp = functions
     try {
       const { email, consent_given, consent_version } = validate(sendOtpSchema, data);
 
-      // Rate limit: max 3 OTPs per email per 10 minutes
       await RateLimits.sendOtp(email);
 
-      // Verify the email domain belongs to a registered, approved college
       const college = await CollegeService.getByDomain(email);
       if (!college) {
-        // Return same response as valid to avoid email enumeration
         log.warn(`OTP request for unregistered domain: ${maskEmail(email)}`);
         return {
           success: true,
@@ -116,12 +107,10 @@ export const sendOtp = functions
         };
       }
 
-      // Generate & hash OTP
       const otp = generateOtp();
       const otpHash = await hashOtp(otp);
       const expiresAt = getOtpExpiry();
 
-      // Upsert OTP record
       await db.collection(COLLECTIONS.OTP_RECORDS).doc(email).set({
         email,
         otp_hash: otpHash,
@@ -134,9 +123,8 @@ export const sendOtp = functions
         created_at: FieldValue.serverTimestamp(),
       });
 
-      // Send OTP via email
       try {
-        const hasSmtpConfig = Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
+        const hasSmtpConfig = Boolean(smtpConfig.user && smtpConfig.pass);
 
         if (process.env.FUNCTIONS_EMULATOR === 'true') {
           log.info(`[DEV MODE] Generated OTP for ${maskEmail(email)}: ${otp}`);
@@ -147,19 +135,17 @@ export const sendOtp = functions
           await deliverOtp(email, otp, college.name);
           log.info(`✓ OTP email sent successfully to ${maskEmail(email)}`);
         } else if (process.env.FUNCTIONS_EMULATOR === 'true') {
-          log.warn(`SMTP credentials not configured in .env.local — OTP for ${maskEmail(email)} is: ${otp}`);
+          log.warn(`SMTP credentials not configured — OTP for ${maskEmail(email)} is: ${otp}`);
         } else {
           await deliverOtp(email, otp, college.name);
         }
       } catch (deliveryError) {
         log.error(`✗ OTP email delivery failed for ${maskEmail(email)}:`, deliveryError);
-        
-        // If in production, invalidate OTP and throw error so user is notified
         if (process.env.FUNCTIONS_EMULATOR !== 'true') {
           await db.collection(COLLECTIONS.OTP_RECORDS).doc(email).delete();
           throw deliveryError;
         } else {
-          log.warn(`[DEV MODE] Delivery error ignored in emulator so testing can continue. Use logged OTP above.`);
+          log.warn(`[DEV MODE] Delivery error ignored in emulator. Use logged OTP above.`);
         }
       }
 

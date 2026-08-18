@@ -20,12 +20,11 @@ export function OtpInput({
   const digits = value.split('').concat(Array(length - value.length).fill(''));
 
   useEffect(() => {
-    // Focus first empty input box on mount
     const firstEmptyIndex = value.length < length ? value.length : length - 1;
     if (inputRefs.current[firstEmptyIndex] && !disabled) {
       inputRefs.current[firstEmptyIndex]?.focus();
     }
-  }, []);
+  }, [disabled, length, value.length]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
     const rawVal = e.target.value;

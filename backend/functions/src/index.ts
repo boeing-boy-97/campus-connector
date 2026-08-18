@@ -14,9 +14,10 @@
 import './config/firebase';
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
-export { sendOtp }     from './functions/auth/sendOtp';
-export { verifyOtp }   from './functions/auth/verifyOtp';
-export { login }       from './functions/auth/login';
+export { sendOtp }        from './functions/auth/sendOtp';
+export { verifyOtp }      from './functions/auth/verifyOtp';
+export { login }          from './functions/auth/login';
+export { updateUserRole } from './functions/auth/updateUserRole';
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 export { createProfile }  from './functions/users/createProfile';

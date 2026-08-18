@@ -2,9 +2,9 @@
 
 > A trusted, college-verified social & networking app — for students, by students.
 
-[![Flutter Build](https://github.com/your-org/campus-connect/actions/workflows/mobile.yml/badge.svg)](https://github.com/your-org/campus-connect/actions/workflows/mobile.yml)
-[![Admin Build](https://github.com/your-org/campus-connect/actions/workflows/admin.yml/badge.svg)](https://github.com/your-org/campus-connect/actions/workflows/admin.yml)
-[![Functions Deploy](https://github.com/your-org/campus-connect/actions/workflows/functions.yml/badge.svg)](https://github.com/your-org/campus-connect/actions/workflows/functions.yml)
+[![Flutter Build](https://github.com/boeing-boy-97/campus-connector/actions/workflows/mobile.yml/badge.svg)](https://github.com/boeing-boy-97/campus-connector/actions/workflows/mobile.yml)
+[![Admin Build](https://github.com/boeing-boy-97/campus-connector/actions/workflows/admin.yml/badge.svg)](https://github.com/boeing-boy-97/campus-connector/actions/workflows/admin.yml)
+[![Functions Deploy](https://github.com/boeing-boy-97/campus-connector/actions/workflows/functions.yml/badge.svg)](https://github.com/boeing-boy-97/campus-connector/actions/workflows/functions.yml)
 
 ---
 
@@ -50,7 +50,7 @@ Admin Web Panel (React)
 ## 📁 Project Structure
 
 ```
-campus-connect/
+campus-connector/
 ├── apps/
 │   ├── mobile/          ← Flutter mobile app (Android + iOS)
 │   └── admin/           ← React admin dashboard
@@ -94,14 +94,21 @@ campus-connect/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/campus-connect.git
-cd campus-connect
+git clone https://github.com/boeing-boy-97/campus-connector.git
+cd campus-connector
 ```
 
 ### 2. Install Root Dependencies
 
 ```bash
 npm install
+```
+
+If you need the workspace dependencies for the admin panel and functions separately:
+
+```bash
+cd apps/admin && npm install
+cd ../../backend/functions && npm install
 ```
 
 ### 3. Setup Firebase
@@ -143,6 +150,7 @@ flutter run
 
 ```bash
 cd apps/admin
+cp .env.example .env.local
 npm install
 npm run dev
 ```

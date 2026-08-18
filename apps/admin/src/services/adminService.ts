@@ -1,7 +1,17 @@
 import { db, reviewVerificationFn, createCollegeFn, approveCollegeFn } from './firebase';
 import {
-  collection, getDocs, query, where, orderBy,
-  limit, doc, updateDoc, Timestamp, getCountFromServer
+  collection,
+  doc,
+  getCountFromServer,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  serverTimestamp,
+  Timestamp,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
 
 // ── Dashboard Stats ────────────────────────────────────────────────────────────
@@ -16,7 +26,6 @@ export async function getDashboardStats() {
       getCountFromServer(query(collection(db, 'reports'), where('status', '==', 'pending'))),
     ]);
 
-  // Recent verifications
   const recentSnap = await getDocs(
     query(
       collection(db, 'verification_requests'),
@@ -26,12 +35,17 @@ export async function getDashboardStats() {
     )
   );
 
-  const recent_verifications = recentSnap.docs.map((d) => ({
-    id: d.id,
-    ...d.data(),
-    submitted_at: (d.data().submitted_at as Timestamp)?.toDate()
-      .toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
-  }));
+  const recent_verifications = recentSnap.docs.map((d) => {
+    const data = d.data();
+    return {
+      id: d.id,
+      ...data,
+      submitted_at: (data.submitted_at as Timestamp | undefined)?.toDate().toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+      }),
+    };
+  });
 
   return {
     total_students: totalStudents.data().count,
@@ -68,21 +82,20 @@ export async function getVerificationQueue() {
     )
   );
 
-  // Enrich with student data
   const items = await Promise.all(
     snap.docs.map(async (d) => {
       const vr = d.data();
-      const studentSnap = await getDocs(
-        query(collection(db, 'students'), where('__name__', '==', vr.student_id))
-      );
-      const student = studentSnap.docs[0]?.data() || {};
-      const collegeSnap = await getDocs(
-        query(collection(db, 'colleges'), where('__name__', '==', vr.college_id))
-      );
-      const college = collegeSnap.docs[0]?.data() || {};
+      const [studentSnap, collegeSnap] = await Promise.all([
+        getDoc(doc(db, 'students', vr.student_id)),
+        getDoc(doc(db, 'colleges', vr.college_id)),
+      ]);
+
+      const student = studentSnap.exists() ? studentSnap.data() : {};
+      const college = collegeSnap.exists() ? collegeSnap.data() : {};
 
       return {
         id: d.id,
+        request_id: d.id,
         student_id: vr.student_id,
         uniform_photo_url: vr.uniform_photo_url,
         id_card_photo_url: vr.id_card_photo_url,
@@ -97,8 +110,11 @@ export async function getVerificationQueue() {
           : null,
         intent_flags: student.intent_flags,
         profile_photos: student.profile_photos,
-        submitted_at: (vr.submitted_at as Timestamp)?.toDate()
-          .toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+        submitted_at: (vr.submitted_at as Timestamp | undefined)?.toDate().toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        }),
       };
     })
   );
@@ -107,8 +123,8 @@ export async function getVerificationQueue() {
 }
 
 // ── Review Verification ────────────────────────────────────────────────────────
-export async function reviewVerification(requestId: string, action: 'approve' | 'reject', notes?: string) {
-  const result = await reviewVerificationFn({ request_id: requestId, action, notes });
+export async function reviewVerification(studentId: string, action: 'approve' | 'reject', reason?: string) {
+  const result = await reviewVerificationFn({ student_id: studentId, action, reason });
   return result.data;
 }
 
@@ -116,8 +132,14 @@ export async function reviewVerification(requestId: string, action: 'approve' | 
 export async function getUsers(statusFilter?: string) {
   let q = query(collection(db, 'students'), orderBy('created_at', 'desc'), limit(100));
   if (statusFilter) {
-    q = query(collection(db, 'students'), where('verification_status', '==', statusFilter), orderBy('created_at', 'desc'), limit(100));
+    q = query(
+      collection(db, 'students'),
+      where('verification_status', '==', statusFilter),
+      orderBy('created_at', 'desc'),
+      limit(100)
+    );
   }
+
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
@@ -150,5 +172,6 @@ export async function updateReportStatus(reportId: string, status: string, actio
   await updateDoc(doc(db, 'reports', reportId), {
     status,
     action_taken: actionNotes || null,
+    updated_at: serverTimestamp(),
   });
 }

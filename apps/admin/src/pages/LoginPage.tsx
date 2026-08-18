@@ -3,6 +3,8 @@ import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../services/firebase';
 import { useNavigate } from 'react-router-dom';
 
+const isAuthorizedRole = (role: unknown) => role === 'admin' || role === 'moderator';
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,29 +20,32 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const credential = await signInWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const tokenResult = await credential.user.getIdTokenResult(true);
+      const role = tokenResult.claims.role;
 
-      // TEMP ADMIN CHECK
-      const allowedAdmins = [
-        'vedant.test@gmail.com'
-      ];
-
-      const userEmail = credential.user.email || '';
-
-      if (!allowedAdmins.includes(userEmail)) {
+      if (!isAuthorizedRole(role)) {
         await signOut(auth);
-        setError('Access denied. Admin account required.');
+        setError('Access denied. This dashboard is restricted to admin and moderator accounts.');
         return;
       }
 
       navigate('/dashboard');
-    } catch (err: any) {
-      console.error(err);
-      setError('Invalid credentials. Please try again.');
+    } catch (err: unknown) {
+      console.error('Admin login failed:', err);
+      if (err instanceof Error && 'code' in err) {
+        const code = (err as { code?: string }).code;
+        const messageMap: Record<string, string> = {
+          'auth/invalid-credential': 'The email or password is incorrect.',
+          'auth/user-not-found': 'No account exists for that email.',
+          'auth/wrong-password': 'The password is incorrect.',
+          'auth/too-many-requests': 'Too many login attempts. Please wait a moment and try again.',
+          'auth/network-request-failed': 'Network error. Please check your connection and try again.',
+        };
+        setError(messageMap[code ?? ''] ?? 'Login failed. Please try again.');
+        return;
+      }
+      setError('Login failed. Please try again.');
     } finally {
       setLoading(false);
     }
