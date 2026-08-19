@@ -1,8 +1,4 @@
-// ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  loginWithGoogle.ts — Google Sign-In authentication                     ║
-// ╚══════════════════════════════════════════════════════════════════════════╝
-
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { db, auth as adminAuth, FieldValue } from '../../config/firebase';
 import { validate } from '../../middleware/validate.middleware';
@@ -18,13 +14,17 @@ const schema = z.object({
   id_token: z.string().min(1, 'ID token is required'),
 });
 
-export const loginWithGoogle = functions
-  .region('asia-south1')
-  .runWith({ memory: '256MB', timeoutSeconds: 30 })
-  .https.onCall(async (data, context) => {
+export const loginWithGoogle = onCall(
+  {
+    region: 'asia-south1',
+    cors: true,
+    memory: '256MiB',
+    timeoutSeconds: 30,
+  },
+  async (request) => {
     try {
       // Verify the ID token from Google
-      const { id_token } = validate(schema, data);
+      const { id_token } = validate(schema, request.data);
 
       let decodedToken;
       try {
@@ -91,4 +91,5 @@ export const loginWithGoogle = functions
     } catch (error) {
       handleUnknownError(error, 'loginWithGoogle');
     }
-  });
+  }
+);

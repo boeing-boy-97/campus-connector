@@ -5,7 +5,7 @@
 // ─── OTP Configuration ────────────────────────────────────────────────────────
 export const OTP_CONSTANTS = {
   LENGTH: 6,
-  EXPIRY_MINUTES: 10,
+  EXPIRY_MINUTES: 5,
   MAX_ATTEMPTS: 3,
   RATE_LIMIT_WINDOW_MINUTES: 10,
   MAX_SENDS_PER_WINDOW: 3,

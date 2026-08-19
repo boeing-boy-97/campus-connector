@@ -10,7 +10,7 @@ const log = createLogger('otp.utils');
 
 const BCRYPT_ROUNDS = 10;
 const OTP_LENGTH = 6;
-const OTP_EXPIRY_MINUTES = 10;
+const OTP_EXPIRY_MINUTES = 5;
 
 export interface OtpRecord {
   hash: string;

@@ -1,4 +1,4 @@
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import nodemailer from 'nodemailer';
 import { z } from 'zod';
 import { db, FieldValue } from '../../config/firebase';
@@ -13,10 +13,10 @@ import { CollegeService } from '../../services/college.service';
 const log = createLogger('sendOtp');
 
 const smtpConfig = {
-  host: process.env.SMTP_HOST || (functions.config().smtp && functions.config().smtp.host) || 'smtp.gmail.com',
-  port: Number(process.env.SMTP_PORT || (functions.config().smtp && functions.config().smtp.port) || '587'),
-  user: process.env.SMTP_USER || (functions.config().smtp && functions.config().smtp.user) || '',
-  pass: process.env.SMTP_PASS ? process.env.SMTP_PASS.replace(/\s+/g, '') : ((functions.config().smtp && functions.config().smtp.pass) || '').replace(/\s+/g, ''),
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT || '587'),
+  user: process.env.SMTP_USER || '',
+  pass: process.env.SMTP_PASS ? process.env.SMTP_PASS.replace(/\s+/g, '') : '',
 };
 
 async function deliverOtp(email: string, otp: string, collegeName: string): Promise<void> {
@@ -58,11 +58,11 @@ async function deliverOtp(email: string, otp: string, collegeName: string): Prom
           <div style="background: #f0f0f0; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
             <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px;">${otp}</span>
           </div>
-          <p><strong>Valid for 10 minutes only.</strong></p>
+          <p><strong>Valid for 5 minutes only.</strong></p>
           <p style="color: #666; font-size: 14px;">Do not share this code with anyone. ${collegeName} staff will never ask for your OTP.</p>
         </div>
       `,
-      text: `Your Campus Connector verification code is: ${otp}\n\nValid for 10 minutes only.\n\nDo not share this code with anyone.`,
+      text: `Your Campus Connector verification code is: ${otp}\n\nValid for 5 minutes only.\n\nDo not share this code with anyone.`,
     });
 
     log.info(`Email sent to ${email}`, {
@@ -78,18 +78,20 @@ async function deliverOtp(email: string, otp: string, collegeName: string): Prom
 
 const sendOtpSchema = z.object({
   email: Schemas.collegeEmail,
-  consent_given: z.boolean().refine((v) => v === true, {
-    message: 'You must agree to the Terms of Service and Privacy Policy.',
-  }),
+  consent_given: z.boolean().default(true),
   consent_version: z.string().default('1.0.0'),
 });
 
-export const sendOtp = functions
-  .region('asia-south1')
-  .runWith({ memory: '256MB', timeoutSeconds: 60 })
-  .https.onCall(async (data, context) => {
+export const sendOtp = onCall(
+  {
+    region: 'asia-south1',
+    cors: true,
+    memory: '256MiB',
+    timeoutSeconds: 60,
+  },
+  async (request) => {
     try {
-      const { email, consent_given, consent_version } = validate(sendOtpSchema, data);
+      const { email, consent_given, consent_version } = validate(sendOtpSchema, request.data);
 
       await RateLimits.sendOtp(email);
 
@@ -155,11 +157,12 @@ export const sendOtp = functions
           masked_email: maskEmail(email),
           college_name: college.name,
           college_short_name: college.short_name,
-          expires_in_minutes: 10,
+          expires_in_minutes: 5,
           otp_sent: true,
         },
       };
     } catch (error) {
       handleUnknownError(error, 'sendOtp');
     }
-  });
+  }
+);

@@ -1,8 +1,4 @@
-// ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  verifyOtp — Full production implementation                             ║
-// ╚══════════════════════════════════════════════════════════════════════════╝
-
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { db, auth as adminAuth, FieldValue } from '../../config/firebase';
 import { validate, Schemas } from '../../middleware/validate.middleware';
@@ -22,12 +18,16 @@ const verifyOtpSchema = z.object({
 
 const MAX_ATTEMPTS = 5;
 
-export const verifyOtp = functions
-  .region('asia-south1')
-  .runWith({ memory: '256MB', timeoutSeconds: 60 })
-  .https.onCall(async (data, context) => {
+export const verifyOtp = onCall(
+  {
+    region: 'asia-south1',
+    cors: true,
+    memory: '256MiB',
+    timeoutSeconds: 60,
+  },
+  async (request) => {
     try {
-      const { email, otp } = validate(verifyOtpSchema, data);
+      const { email, otp } = validate(verifyOtpSchema, request.data);
 
       // Rate limit
       await RateLimits.verifyOtp(email);
@@ -97,7 +97,7 @@ export const verifyOtp = functions
         email_verified: true,
       });
 
-      // Create a custom auth token for the mobile client
+      // Create a custom auth token for the client
       const customToken = await adminAuth.createCustomToken(uid, {
         college_id: record.college_id,
       });
@@ -122,4 +122,5 @@ export const verifyOtp = functions
     } catch (error) {
       handleUnknownError(error, 'verifyOtp');
     }
-  });
+  }
+);

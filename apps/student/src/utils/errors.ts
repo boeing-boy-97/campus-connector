@@ -79,7 +79,20 @@ export function formatErrorMessage(error: unknown): string {
     return 'You must accept the Terms of Service and Privacy Policy to continue.';
   }
 
+  // Handle generic internal/service failure gracefully
+  if (
+    code === 'functions/internal' ||
+    code === 'internal' ||
+    message.toLowerCase() === 'internal' ||
+    message.includes('INTERNAL')
+  ) {
+    return 'Unable to complete verification request at the moment. Please verify your connection or try again in a minute.';
+  }
+
   // General fallback - clean technical prefix if present
   const cleaned = message.replace(/^FirebaseError:\s*/, '').replace(/^[a-z-]+\/[a-z-]+:\s*/, '');
-  return cleaned || 'Something went wrong. Please try again.';
+  if (!cleaned || cleaned.toLowerCase() === 'internal') {
+    return 'Something went wrong while connecting. Please try again.';
+  }
+  return cleaned;
 }
