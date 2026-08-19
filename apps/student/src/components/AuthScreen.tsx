@@ -34,6 +34,7 @@ function maskEmail(email: string): string {
 
 export function AuthScreen() {
   // ── State ───────────────────────────────────────────────────────────────
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [authMethod, setAuthMethod] = useState<AuthMethod>('landing');
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
@@ -260,7 +261,7 @@ export function AuthScreen() {
       >
         {/* ─── LANDING: Method Selection ─────────────────────────────── */}
         {authMethod === 'landing' && (
-          <div className="auth-landing">
+          <div className={`auth-landing auth-landing-${authMode}`}>
             <div className="auth-brand-row">
               <div className="brand-mark brand-mark-animated">C</div>
               <div className="auth-trust-badges">
@@ -269,16 +270,49 @@ export function AuthScreen() {
               </div>
             </div>
 
-            <p className="eyebrow">COLLEGE-VERIFIED COMMUNITY</p>
-            <h1>
-              Meet your campus,
-              <br />
-              <em>for real.</em>
-            </h1>
-            <p className="auth-copy">
-              A private space for verified students to find collaborators,
-              friends, and meaningful campus connections.
-            </p>
+            {/* Sign In / Sign Up toggles */}
+            <div className="auth-mode-selector">
+              <button
+                type="button"
+                className={`auth-mode-tab ${authMode === 'signin' ? 'active' : ''}`}
+                onClick={() => setAuthMode('signin')}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                className={`auth-mode-tab ${authMode === 'signup' ? 'active' : ''}`}
+                onClick={() => setAuthMode('signup')}
+              >
+                Create Account
+              </button>
+            </div>
+
+            <div className="auth-mode-content">
+              <p className="eyebrow">
+                {authMode === 'signin' ? 'COLLEGE-VERIFIED COMMUNITY' : 'JOIN CAMPUS CONNECT'}
+              </p>
+              <h1>
+                {authMode === 'signin' ? (
+                  <>
+                    Welcome back
+                    <br />
+                    <em>to campus.</em>
+                  </>
+                ) : (
+                  <>
+                    Meet your campus,
+                    <br />
+                    <em>for real.</em>
+                  </>
+                )}
+              </h1>
+              <p className="auth-copy">
+                {authMode === 'signin'
+                  ? 'Sign in with your official credentials to connect with classmates, projects, and events.'
+                  : 'A private space for verified students to find collaborators, friends, and meaningful campus connections.'}
+              </p>
+            </div>
 
             {/* Google Sign-In */}
             <button
@@ -304,7 +338,7 @@ export function AuthScreen() {
                   fill="#EA4335"
                 />
               </svg>
-              {busy ? 'Connecting…' : 'Continue with Google'}
+              {busy ? 'Connecting…' : authMode === 'signin' ? 'Sign in with Google' : 'Sign up with Google'}
             </button>
 
             {/* Divider */}
@@ -321,7 +355,7 @@ export function AuthScreen() {
                 <rect x="2" y="4" width="20" height="16" rx="2" />
                 <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
               </svg>
-              College email
+              {authMode === 'signin' ? 'Sign in with Email' : 'Sign up with Email'}
             </button>
 
             {/* Stats */}

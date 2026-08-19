@@ -201,6 +201,72 @@ button:disabled {
   animation: fadeSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Sign In / Create Account Toggle Selector */
+.auth-mode-selector {
+  display: flex;
+  background: rgba(225, 229, 221, 0.55);
+  padding: 4px;
+  border-radius: 14px;
+  margin-bottom: 28px;
+  position: relative;
+  border: 1px solid rgba(200, 205, 195, 0.35);
+  box-shadow: inset 0 1px 2px rgba(46, 58, 48, 0.05);
+}
+
+.auth-mode-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #64716a;
+  border-radius: 10.5px;
+  text-align: center;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.auth-mode-tab:hover {
+  color: #244c43;
+}
+
+.auth-mode-tab.active {
+  color: #244c43;
+  background: #ffffff;
+  box-shadow: 
+    0 1px 2px rgba(46, 58, 48, 0.02),
+    0 4px 12px rgba(46, 58, 48, 0.06);
+}
+
+/* Sliding active tab indicator content transition */
+.auth-mode-content {
+  animation: modeSwitch 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes modeSwitch {
+  from {
+    opacity: 0.5;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Elevate general buttons styling with scales and shadow glows */
+.auth-btn {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.auth-btn:hover {
+  transform: translateY(-1px) scale(1.01);
+}
+
+.auth-btn:active {
+  transform: scale(0.98);
+}
+
 @keyframes fadeSlideUp {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
