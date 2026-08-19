@@ -29,7 +29,8 @@ app.use(
       if (allowedOrigins.includes('*') || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
         return callback(null, true);
       }
-      return callback(null, true);
+      console.warn(`[CORS] Blocked request from origin: ${origin}`);
+      return callback(new Error(`Origin '${origin}' not allowed by CORS`));
     },
     credentials: true,
   })
@@ -94,6 +95,35 @@ app.all('/:project/asia-south1/:name', handleFunctionRequest);
 app.listen(Number(PORT), HOST, () => {
   console.log(`[Campus Connect] Backend HTTP server running on http://${HOST}:${PORT}`);
   console.log(`[Campus Connect] Health check endpoint: http://${HOST}:${PORT}/health`);
+
+  // Startup diagnostics — surface missing env vars early
+  const requiredVars = ['FIREBASE_PROJECT_ID'];
+  const credVars = ['FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
+  const smtpVars = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS'];
+  const missingRequired = requiredVars.filter((k) => !process.env[k]);
+  const missingCred = credVars.filter((k) => !process.env[k]);
+  const missingSMTP = smtpVars.filter((k) => !process.env[k]);
+
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    console.log('[Startup] ✓ FIREBASE_SERVICE_ACCOUNT is set (JSON credentials)');
+  } else if (missingCred.length === 0) {
+    console.log('[Startup] ✓ Firebase credentials configured via FIREBASE_PRIVATE_KEY + FIREBASE_CLIENT_EMAIL');
+  } else {
+    console.warn(`[Startup] ⚠ Missing Firebase credential vars: ${missingCred.join(', ')}`);
+  }
+
+  if (missingRequired.length) {
+    console.warn(`[Startup] ⚠ Missing required env vars: ${missingRequired.join(', ')}`);
+  }
+
+  if (missingSMTP.length) {
+    console.warn(`[Startup] ⚠ Missing SMTP vars (OTP email will fail): ${missingSMTP.join(', ')}`);
+  } else {
+    console.log('[Startup] ✓ SMTP email credentials configured');
+  }
+
+  console.log(`[Startup] CORS origins: ${allowedOrigins.join(', ')}`);
+  console.log(`[Startup] NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
 });
 
 export default app;
