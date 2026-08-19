@@ -37,6 +37,15 @@ app.use(
 
 app.use(express.json({ limit: '10mb' }));
 
+// Root endpoint
+app.get('/', (req: Request, res: Response) => {
+  res.status(200).json({
+    name: 'Campus Connect API Backend',
+    status: 'online',
+    health: '/health',
+  });
+});
+
 // Health Check Endpoint for Render deployment monitoring
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({
