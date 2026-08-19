@@ -42,5 +42,8 @@
     "firebase"
   ],
   "author": "Campus Connect Team",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.6"
+  }
 }

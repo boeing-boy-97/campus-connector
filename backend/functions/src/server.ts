@@ -26,7 +26,15 @@ app.use(
     origin: (origin, callback) => {
       // Allow requests with no origin (e.g. mobile apps, server-to-server, curl)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      
+      const isVercelPreview = origin.startsWith('https://campus-connector-') && origin.endsWith('.vercel.app');
+      
+      if (
+        allowedOrigins.includes('*') ||
+        allowedOrigins.includes(origin) ||
+        isVercelPreview ||
+        process.env.NODE_ENV !== 'production'
+      ) {
         return callback(null, true);
       }
       console.warn(`[CORS] Blocked request from origin: ${origin}`);
