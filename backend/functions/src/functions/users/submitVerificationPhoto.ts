@@ -64,11 +64,35 @@ export const submitVerificationPhoto = functions
         throw Errors.notFound('Profile');
       }
 
-      await studentRef.update({
+      const [signedUrl] = await photo.getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 1000 * 60 * 60 * 24 * 365, // 1 year expiry
+      });
+
+      const batch = db.batch();
+
+      batch.update(studentRef, {
+        verification_status: 'pending',
         verification_photo_path: storage_path,
         verification_submitted_at: FieldValue.serverTimestamp(),
         updated_at: FieldValue.serverTimestamp(),
       });
+
+      const requestRef = db.collection(COLLECTIONS.VERIFICATION_REQUESTS).doc(authCtx.uid);
+      batch.set(requestRef, {
+        id: authCtx.uid,
+        student_id: authCtx.uid,
+        college_id: authCtx.collegeId,
+        uniform_photo_url: signedUrl,
+        id_card_photo_url: null,
+        review_status: 'pending',
+        review_notes: null,
+        reviewed_by: null,
+        submitted_at: FieldValue.serverTimestamp(),
+        reviewed_at: null,
+      });
+
+      await batch.commit();
 
       return {
         success: true,

@@ -49,6 +49,14 @@ export const reviewVerificationPhoto = functions
         updated_at: FieldValue.serverTimestamp(),
       });
 
+      const requestRef = db.collection(COLLECTIONS.VERIFICATION_REQUESTS).doc(student_id);
+      batch.update(requestRef, {
+        review_status: action === 'approve' ? 'approved' : 'rejected',
+        review_notes: reason || null,
+        reviewed_by: authCtx.uid,
+        reviewed_at: FieldValue.serverTimestamp(),
+      });
+
       await batch.commit();
 
       // Sync custom claims so Auth token reflects approval/rejection
