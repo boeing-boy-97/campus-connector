@@ -21,11 +21,16 @@ export const db = getFirestore(app);
 export const functions = getFunctions(app, 'asia-south1');
 export const storage = getStorage(app);
 
-if (import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true') {
+const isEmulator = import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
+const customApiUrl = import.meta.env.VITE_API_URL;
+
+if (isEmulator) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
   connectFunctionsEmulator(functions, '127.0.0.1', 5001);
   connectStorageEmulator(storage, '127.0.0.1', 9199);
+} else if (customApiUrl) {
+  functions.customDomain = customApiUrl.replace(/\/$/, '');
 }
 
 export const reviewVerificationFn = httpsCallable(functions, 'reviewVerificationPhoto');
