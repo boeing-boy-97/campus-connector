@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { connectAuthEmulator, getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { connectStorageEmulator, getStorage } from 'firebase/storage';
@@ -27,11 +27,10 @@ export const db = getFirestore(app);
 export const functions = getFunctions(app, 'asia-south1');
 export const storage = getStorage(app);
 
-setPersistence(auth, browserLocalPersistence).catch((err) => {
-  console.warn('Failed to set auth persistence:', err);
-});
+// Auth persistence (local vs session) is chosen by the person on the auth
+// screen ("Keep me signed in", see AuthScreen) instead of being forced here.
 
-const isEmulator = import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
+export const isEmulator = import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
 const customApiUrl = import.meta.env.VITE_API_URL;
 
 if (isEmulator) {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -15,6 +15,12 @@ import { InboxView, type NoticeItem } from './components/InboxView';
 import { ProfileView } from './components/ProfileView';
 import { Avatar } from './components/Avatar';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { isSessionDead, signOutEverywhere, wasSignedOut } from './utils/authGuard';
+
+// Detected once: Safari (incl. all iOS browsers) cannot keep an OAuth popup
+// opener alive through the Google round-trip, so we use redirect sign-in there.
+const IS_SAFARI_BROWSER =
+  typeof navigator !== 'undefined' && /^((?!chrome|chromium|android).)*safari/i.test(navigator.userAgent);
 
 function ConfigErrorScreen({ error }: { error: string }) {
   return (
@@ -104,6 +110,19 @@ function AppMain() {
   // Listen to Auth State changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      // A session must never outlive an intentional sign-out, even in another
+      // tab, and must not survive a deleted/disabled account.
+      if (currentUser) {
+        if (wasSignedOut()) {
+          await signOutEverywhere().catch(() => {});
+          return;
+        }
+        if (await isSessionDead(currentUser)) {
+          await signOutEverywhere().catch(() => {});
+          return;
+        }
+      }
+
       setUser(currentUser);
       if (currentUser) {
         await fetchProfile();
@@ -245,7 +264,7 @@ function AppMain() {
   const handleSignOut = async () => {
     if (!confirm('Sign out of Campus Connect?')) return;
     try {
-      await signOut(auth);
+      await signOutEverywhere();
       setProfile(null);
       setUser(null);
       setView('discover');
@@ -257,6 +276,13 @@ function AppMain() {
   const openChat = (matchId: string) => {
     setActiveChatMatchId(matchId);
     setView('chat');
+  };
+
+  // Route changes always dismiss the compact-screen account menu.
+  const goToView = (next: View) => {
+    setView(next);
+    setActiveChatMatchId(null);
+    setShowMobileMenu(false);
   };
 
   const activeMatches = useMemo(() => matches.filter((x) => x.status === 'active'), [matches]);
@@ -278,7 +304,7 @@ function AppMain() {
   if (!user) {
     return (
       <ErrorBoundary>
-        <AuthScreen />
+        <AuthScreen initialIsSafari={IS_SAFARI_BROWSER} />
       </ErrorBoundary>
     );
   }
@@ -289,7 +315,7 @@ function AppMain() {
     <ErrorBoundary>
       <div className="app-shell">
         <header className="topbar">
-          <button className="wordmark" onClick={() => setView('discover')} aria-label="Campus Connect home">
+          <button className="wordmark" onClick={() => goToView('discover')} aria-label="Campus Connect home">
             <b>campus</b><i>connect</i>
           </button>
 
@@ -297,7 +323,7 @@ function AppMain() {
             <button
               className="icon-button"
               aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
-              onClick={() => setView('inbox')}
+              onClick={() => goToView('inbox')}
             >
               ♢{unreadCount > 0 && <sup>{unreadCount}</sup>}
             </button>
@@ -310,6 +336,27 @@ function AppMain() {
             </button>
             <Avatar student={profile ?? undefined} size="small" />
           </div>
+
+          {showMobileMenu && (
+            <div className="mobile-menu" role="dialog" aria-label="Account menu">
+              <div className="mobile-menu-user">
+                <Avatar student={profile ?? undefined} size="small" />
+                <div>
+                  <strong>{profile?.full_name ?? 'Your account'}</strong>
+                  <span>{profile?.college_email ?? 'Verified student'}</span>
+                </div>
+              </div>
+              <button
+                className="mobile-menu-signout"
+                onClick={() => {
+                  setShowMobileMenu(false);
+                  void handleSignOut();
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          )}
         </header>
 
         <aside className="sidebar">
@@ -343,6 +390,14 @@ function AppMain() {
             Sign out
           </button>
         </aside>
+
+        {showMobileMenu && (
+          <button
+            className="mobile-backdrop"
+            aria-label="Close menu"
+            onClick={() => setShowMobileMenu(false)}
+          />
+        )}
 
         <main className="content">
           {isProfileIncomplete ? (

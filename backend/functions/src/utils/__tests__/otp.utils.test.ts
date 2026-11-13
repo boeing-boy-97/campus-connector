@@ -38,12 +38,15 @@ describe('otp.utils', () => {
   });
 
   describe('getOtpExpiry', () => {
-    it('returns a time ~10 minutes in the future', () => {
+    it('returns a time ~5 minutes in the future', () => {
+      // OTP lifetime is 5 minutes (see otp.utils.ts + SETUP_OTP_EMAIL.md and the
+      // "valid for 5 minutes" copy in the OTP email). Keep this in sync.
+      const OTP_MINUTES = 5;
       const before = Date.now();
       const expiry = getOtpExpiry();
       const after = Date.now();
-      expect(expiry.getTime()).toBeGreaterThanOrEqual(before + 10 * 60 * 1000 - 1000);
-      expect(expiry.getTime()).toBeLessThanOrEqual(after + 10 * 60 * 1000 + 1000);
+      expect(expiry.getTime()).toBeGreaterThanOrEqual(before + OTP_MINUTES * 60 * 1000 - 1000);
+      expect(expiry.getTime()).toBeLessThanOrEqual(after + OTP_MINUTES * 60 * 1000 + 1000);
     });
   });
 

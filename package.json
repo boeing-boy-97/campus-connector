@@ -1,7 +1,7 @@
 {
   "name": "campus-connect",
   "version": "1.0.0",
-  "description": "Campus Connect — College-verified student social & networking app",
+  "description": "Campus Connect \u2014 College-verified student social & networking app",
   "private": true,
   "workspaces": [
     "apps/admin",
@@ -22,10 +22,12 @@
     "deploy:rules": "firebase deploy --only firestore:rules,storage:rules",
     "deploy:admin": "firebase deploy --only hosting",
     "test:functions": "cd backend/functions && npm test",
-    "test:rules": "echo \"No Firestore rules tests defined yet — see https://firebase.google.com/docs/rules/unit-tests\"",
-    "lint:student": "npm --prefix apps/student run lint",
+    "test:rules": "echo \"No Firestore rules tests defined yet \u2014 see https://firebase.google.com/docs/rules/unit-tests\"",
+    "lint:student": "npm --prefix apps/student run lint && npm --prefix apps/student run test:errors",
     "lint": "npm --prefix apps/admin run lint && npm --prefix backend/functions run lint && npm run lint:student",
-    "seed": "cd scripts/seed-data && npx ts-node seed.ts"
+    "seed": "cd scripts/seed-data && npx ts-node seed.ts",
+    "test:student": "npm --prefix apps/student run test:errors",
+    "test": "npm run test:functions && npm run test:student"
   },
   "devDependencies": {
     "firebase-tools": "^13.0.0",
