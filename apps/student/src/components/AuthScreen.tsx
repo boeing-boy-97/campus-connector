@@ -260,7 +260,9 @@ export function AuthScreen({ initialIsSafari = false }: AuthScreenProps) {
       .catch(async (e: unknown) => {
         if (cancelled) return;
         const code = (e as { code?: string })?.code;
+        // Nothing was started (some browsers don't support the flow at all).
         if (code === 'auth/operation-not-supported-in-this-environment') return;
+
         const message = formatErrorMessage(e);
         setError(message);
         if (auth.currentUser) {
@@ -409,10 +411,12 @@ export function AuthScreen({ initialIsSafari = false }: AuthScreenProps) {
       const code = (e as { code?: string })?.code;
 
       // Fall back to a redirect when the popup cannot be used at all.
+      // (Some browsers report a blocked/aborted popup as a generic internal error.)
       if (
         code === 'auth/popup-blocked' ||
         code === 'auth/operation-not-supported-in-this-environment' ||
-        code === 'auth/web-storage-unsupported'
+        code === 'auth/web-storage-unsupported' ||
+        code === 'auth/internal-error'
       ) {
         try {
           const provider = new GoogleAuthProvider();

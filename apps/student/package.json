@@ -10,7 +10,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:errors": "node --experimental-strip-types scripts/tests/auth-errors.mjs"
   },
   "dependencies": {
     "firebase": "^10.12.0",

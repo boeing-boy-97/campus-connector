@@ -32,6 +32,21 @@ export function formatErrorMessage(error: unknown): string {
   if (code === 'auth/credential-already-in-use') {
     return 'This credential is already associated with another account.';
   }
+  if (code === 'auth/unauthorized-domain') {
+    return 'This domain is not authorised for Google sign-in. Please use your college email instead, or contact support.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'This sign-in method is currently unavailable. Please use your college email instead.';
+  }
+  if (code === 'auth/email-already-in-use') {
+    return 'An account already exists for this email with a different sign-in method. Please use that method.';
+  }
+  if (code === 'auth/internal-error') {
+    return 'Google sign-in could not be completed. Please try again, or use your college email.';
+  }
+  if (code === 'auth/web-storage-unsupported' || code === 'auth/operation-not-supported-in-this-environment') {
+    return 'Your browser is blocking the sign-in storage. Try a normal (non-private) window, or use your college email.';
+  }
 
   // Phone Auth errors
   if (code === 'auth/invalid-phone-number') {
@@ -89,8 +104,16 @@ export function formatErrorMessage(error: unknown): string {
     return 'Unable to complete verification request at the moment. Please verify your connection or try again in a minute.';
   }
 
+  // Any other Firebase Auth failure: never expose the raw SDK string.
+  if (code.startsWith('auth/')) {
+    return 'Sign-in could not be completed. Please try again, or use your college email.';
+  }
+
   // General fallback - clean technical prefix if present
-  const cleaned = message.replace(/^FirebaseError:\s*/, '').replace(/^[a-z-]+\/[a-z-]+:\s*/, '');
+  const cleaned = message
+    .replace(/^FirebaseError:\s*/, '')
+    .replace(/^[a-z-]+\/[a-z-]+:\s*/, '')
+    .replace(/^Firebase:\s*/, '');
   if (!cleaned || cleaned.toLowerCase() === 'internal') {
     return 'Something went wrong while connecting. Please try again.';
   }
