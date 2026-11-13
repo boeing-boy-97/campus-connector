@@ -880,6 +880,7 @@ button:disabled {
 /* ── Checkboxes ───────────────────────────────────────────────────────────── */
 
 .bp-check {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -889,6 +890,17 @@ button:disabled {
   color: var(--bp-ink-soft);
   cursor: pointer;
   user-select: none;
+}
+
+/* Headings are programmatically focusable (focus hand-off), never a tab stop. */
+.bp-step h2:focus {
+  outline: none;
+}
+
+.bp-step h2:focus-visible {
+  outline: 2px solid var(--bp-sage);
+  outline-offset: 4px;
+  border-radius: 6px;
 }
 
 .bp-check input {

@@ -227,6 +227,7 @@ export function AuthScreen({ initialIsSafari = false }: AuthScreenProps) {
   const [legalDoc, setLegalDoc] = useState<LegalDocId | null>(null);
 
   const emailRef = useRef<HTMLInputElement>(null);
+  const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const isSafari = initialIsSafari;
 
   const busyRef = useRef(busy);
@@ -457,6 +458,8 @@ export function AuthScreen({ initialIsSafari = false }: AuthScreenProps) {
   const goBack = () => {
     if (busy) return;
     setStep('method');
+    // The control that had focus is about to unmount — land on the heading.
+    requestAnimationFrame(() => stepHeadingRef.current?.focus());
     setOtp('');
     setError('');
     setCollegeName('');
@@ -549,7 +552,17 @@ export function AuthScreen({ initialIsSafari = false }: AuthScreenProps) {
           </div>
 
           <div className="bp-card-body">
-            <div className="bp-head">
+            <p className="bp-sr-only" aria-live="polite">
+            {step === 'method'
+              ? mode === 'signin'
+                ? 'Sign in'
+                : 'Create account'
+              : step === 'email'
+                ? 'Enter your college email'
+                : 'Enter the verification code sent to your email'}
+          </p>
+
+          <div className="bp-head">
               <span className={`bp-chip bp-chip-${mode}`}>{mode === 'signin' ? 'SIGN IN' : 'CREATE ACCOUNT'}</span>
               {step !== 'method' && (
                 <button type="button" className="bp-back" onClick={goBack} disabled={locked}>
@@ -562,7 +575,7 @@ export function AuthScreen({ initialIsSafari = false }: AuthScreenProps) {
             {/* STEP 1 — choose a sign-in method */}
             {step === 'method' && (
               <div className="bp-step" key={`method-${mode}`}>
-                <h2 id="bp-card-title">
+                <h2 id="bp-card-title" ref={stepHeadingRef} tabIndex={-1}>
                   {mode === 'signin' ? 'Welcome back' : 'Create your account'}
                 </h2>
                 <p className="bp-sub">
