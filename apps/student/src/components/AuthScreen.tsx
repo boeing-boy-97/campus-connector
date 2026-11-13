@@ -1,16 +1,28 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { FormEvent, ReactNode, SVGProps } from 'react';
 import {
+  browserLocalPersistence,
+  browserSessionPersistence,
+  getRedirectResult,
+  setPersistence,
   signInWithCustomToken,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
+  GoogleAuthProvider,
 } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../services/firebase';
 import { OtpInput } from './OtpInput';
+import { LegalModal } from './LegalModal';
+import { BrandMark, BrandWordmark, GoogleMark } from './BrandMark';
 import { formatErrorMessage } from '../utils/errors';
+import { clearSignedOutFlag } from '../utils/authGuard';
+import { LEGAL_VERSION } from '../utils/terms';
+import type { LegalDocId } from '../utils/terms';
 
-const RESEND_COOLDOWN_SECONDS = 30;
+const OTP_LENGTH = 6;
+const LEGAL_VERSION_SENT = LEGAL_VERSION;
 
 // Module-level so an error raised during the Google flow can survive the
 // unmount/remount of AuthScreen. When the Google popup signs the user in,
@@ -19,118 +31,284 @@ const RESEND_COOLDOWN_SECONDS = 30;
 // AuthScreen — this store lets that new mount show the reason.
 let pendingAuthError: string | null = null;
 
-type AuthMethod = 'landing' | 'email' | 'google';
-type EmailStep = 'input' | 'otp';
+type Step = 'method' | 'email' | 'otp';
+type Mode = 'signin' | 'signup';
+type AuthMethod = 'google' | 'email';
+
+/* ── Payload contracts for the auth Cloud Functions (asia-south1) ─────────── */
+
+interface SendOtpResponse {
+  success: boolean;
+  data: {
+    message?: string;
+    otp_sent?: boolean;
+    masked_email?: string;
+    college_name?: string;
+    college_short_name?: string;
+    expires_in_minutes?: number;
+  };
+}
+
+interface VerifyOtpResponse {
+  success: boolean;
+  data: {
+    custom_token: string;
+    uid?: string;
+    has_profile?: boolean;
+    college_name?: string;
+    is_new_user?: boolean;
+  };
+}
+
+interface GoogleLinkResponse {
+  success: boolean;
+  data: {
+    uid?: string;
+    college_name?: string;
+    has_profile?: boolean;
+  };
+}
+
+/* ── Small helpers ───────────────────────────────────────────────────────── */
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
   if (!domain) return email;
-  const maskedLocal =
-    local.length > 2
-      ? `${local[0]}***${local[local.length - 1]}`
-      : `${local[0]}***`;
+  const maskedLocal = local.length > 2 ? `${local[0]}***${local[local.length - 1]}` : `${local[0]}***`;
   return `${maskedLocal}@${domain}`;
 }
 
-export function AuthScreen() {
-  // ── State ───────────────────────────────────────────────────────────────
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
-  const [authMethod, setAuthMethod] = useState<AuthMethod>('landing');
-  const [email, setEmail] = useState('');
-  const [otp, setOtp] = useState('');
-  const [emailStep, setEmailStep] = useState<EmailStep>('input');
+function collegeFromDomain(email: string): string {
+  const domain = email.split('@')[1];
+  if (!domain) return 'your college';
+  return domain
+    .split('.')[0]
+    .replace(/^student$/i, 'your college')
+    .toUpperCase();
+}
 
-  const [busy, setBusy] = useState(false);
+function domainOf(email: string): string {
+  return email.split('@')[1]?.toLowerCase() ?? '';
+}
+
+function readRememberMe(): boolean {
+  try {
+    return localStorage.getItem('cc:remember-me') !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+/* ── Inline icons (stroke inherits currentColor) ─────────────────────────── */
+
+type IconProps = SVGProps<SVGSVGElement> & { size?: number };
+
+function Icon({ size = 20, children, ...rest }: IconProps & { children: ReactNode }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.9}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      {...rest}
+    >
+      {children}
+    </svg>
+  );
+}
+
+const MailIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2.5" y="4.5" width="19" height="15" rx="2.5" />
+    <path d="m3.5 7 7.6 5.1a2 2 0 0 0 2.2 0L21 7" />
+  </Icon>
+);
+const ArrowLeftIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M19 12H5M11 18l-6-6 6-6" />
+  </Icon>
+);
+const ArrowRightIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </Icon>
+);
+const LockIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="4.5" y="10.5" width="15" height="10" rx="2.5" />
+    <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+  </Icon>
+);
+const ShieldIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 3 4.5 6v5.5c0 4.4 3.1 8.2 7.5 9.5 4.4-1.3 7.5-5.1 7.5-9.5V6L12 3Z" />
+    <path d="m8.8 12 2.2 2.2 4.2-4.4" />
+  </Icon>
+);
+const CapIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m2.5 9.5 9.5-5 9.5 5-9.5 5-9.5-5Z" />
+    <path d="M6.5 11.5v4.2c0 1.2 2.5 2.8 5.5 2.8s5.5-1.6 5.5-2.8v-4.2" />
+    <path d="M21.5 9.5v5" />
+  </Icon>
+);
+const UsersIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="9" cy="8.5" r="3.2" />
+    <path d="M3 19.5c.6-3.1 3-5 6-5s5.4 1.9 6 5" />
+    <path d="M15.6 5.6a3.2 3.2 0 0 1 0 6" />
+    <path d="M17.5 14.8c2 .5 3.3 2.1 3.8 4.7" />
+  </Icon>
+);
+const CheckIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m5 12.5 4.5 4.5L19 7.5" />
+  </Icon>
+);
+const AlertIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7.5V13M12 16.4v.1" />
+  </Icon>
+);
+const ClockIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7.5V12l3 1.8" />
+  </Icon>
+);
+
+/* ── Shared bits ─────────────────────────────────────────────────────────── */
+
+function FieldError({ id, children }: { id: string; children: ReactNode }) {
+  return (
+    <p className="bp-field-error" id={id} role="alert">
+      <AlertIcon size={14} />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+interface AuthScreenProps {
+  /** Browser field detected at import time — used to pick the best Google flow. */
+  initialIsSafari?: boolean;
+}
+
+export function AuthScreen({ initialIsSafari = false }: AuthScreenProps) {
+  const [step, setStep] = useState<Step>('method');
+  const [mode, setMode] = useState<Mode>('signin');
+  const [busy, setBusy] = useState<false | AuthMethod>(false);
   const [error, setError] = useState(() => {
     const pending = pendingAuthError;
     pendingAuthError = null;
     return pending ?? '';
   });
-  const [resendTimer, setResendTimer] = useState(0);
+
+  // Email / OTP flow state
+  const [email, setEmail] = useState('');
+  const [otp, setOtp] = useState('');
+  const [emailTouched, setEmailTouched] = useState(false);
   const [collegeName, setCollegeName] = useState('');
-  const [animating, setAnimating] = useState(false);
-  const [entering, setEntering] = useState(true);
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [resendTimer, setResendTimer] = useState(0);
+  const [verifying, setVerifying] = useState(false);
 
-  // ── Entry animation ─────────────────────────────────────────────────────
-  useEffect(() => {
-    const timer = setTimeout(() => setEntering(false), 100);
-    return () => clearTimeout(timer);
-  }, []);
+  // Consent & session preferences
+  const [consent, setConsent] = useState(false);
+  const [keepSignedIn, setKeepSignedIn] = useState(readRememberMe);
+  const [legalDoc, setLegalDoc] = useState<LegalDocId | null>(null);
 
-  // ── Countdown timer ─────────────────────────────────────────────────────
+  const emailRef = useRef<HTMLInputElement>(null);
+  const isSafari = initialIsSafari;
+
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+
+  /* ── Escape hatches ─────────────────────────────────────────────────────── */
+
+  // Countdown for the "resend code" control.
   useEffect(() => {
     if (resendTimer <= 0) return;
-    const interval = setInterval(
-      () => setResendTimer((p) => p - 1),
-      1000,
-    );
-    return () => clearInterval(interval);
+    const id = setInterval(() => setResendTimer((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(id);
   }, [resendTimer]);
 
-  // ── Navigation helper with animation ────────────────────────────────────
-  const navigateTo = useCallback(
-    (method: AuthMethod) => {
-      setAnimating(true);
-      setError('');
-      setTimeout(() => {
-        setAuthMethod(method);
-        setAnimating(false);
-      }, 250);
-    },
-    [],
-  );
+  // Close a modal only while the user is allowed to leave (never mid-request).
+  const closeLegal = useCallback(() => setLegalDoc(null), []);
 
-  const goBack = useCallback(() => {
-    setOtp('');
-    setEmailStep('input');
-    setError('');
-    setCollegeName('');
-    navigateTo('landing');
-  }, [navigateTo]);
+  // Google redirect flows (Safari-safe fallback) come back here.
+  useEffect(() => {
+    let cancelled = false;
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (!result || cancelled) return;
+        const idToken = await result.user.getIdToken();
+        const linkFn = httpsCallable<{ id_token: string }, GoogleLinkResponse>(functions, 'loginWithGoogle');
+        await linkFn({ id_token: idToken });
+        clearSignedOutFlag();
+        await result.user.getIdToken(true);
+      })
+      .catch(async (e: unknown) => {
+        if (cancelled) return;
+        const code = (e as { code?: string })?.code;
+        if (code === 'auth/operation-not-supported-in-this-environment') return;
+        const message = formatErrorMessage(e);
+        setError(message);
+        if (auth.currentUser) {
+          pendingAuthError = message;
+          await signOut(auth).catch(() => {});
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  // ══════════════════════════════════════════════════════════════════════
-  //  EMAIL OTP FLOW
-  // ══════════════════════════════════════════════════════════════════════
+  // If the user starts typing, clear stale errors.
+  useEffect(() => {
+    if (step === 'email') emailRef.current?.focus();
+  }, [step]);
 
-  const requestOtp = async (targetEmail: string) => {
-    setBusy(true);
+  /* ── Email OTP flow ────────────────────────────────────────────────────── */
+
+  const requestOtp = useCallback(async (targetEmail: string): Promise<boolean> => {
+    setBusy('email');
     setError('');
     try {
       const sendOtpFn = httpsCallable<
-        {
-          email: string;
-          consent_given: boolean;
-          consent_version: string;
-        },
-        {
-          success: boolean;
-          data: {
-            otp_sent?: boolean;
-            college_name?: string;
-            masked_email?: string;
-          };
-        }
+        { email: string; consent_given: boolean; consent_version: string },
+        SendOtpResponse
       >(functions, 'sendOtp');
 
       const result = await sendOtpFn({
         email: targetEmail.trim().toLowerCase(),
         consent_given: true,
-        consent_version: '1.0.0',
+        consent_version: LEGAL_VERSION_SENT,
       });
 
       const data = result.data.data;
 
       if (!data.otp_sent) {
+        const domain = domainOf(targetEmail);
         setError(
-          'This email domain is not registered. Please use your official college institutional email.',
+          `We couldn't find an approved college for ${domain ? `“${domain}”` : 'that email'}. Use your official college email, or ask your college to register with Campus Connect.`,
         );
         return false;
       }
 
       if (data.college_name) setCollegeName(data.college_name);
-
-      setEmailStep('otp');
-      setResendTimer(RESEND_COOLDOWN_SECONDS);
+      setMaskedEmail(data.masked_email ?? maskEmail(targetEmail));
+      setStep('otp');
+      setOtp('');
+      setResendTimer(30);
       return true;
     } catch (e) {
       setError(formatErrorMessage(e));
@@ -138,410 +316,563 @@ export function AuthScreen() {
     } finally {
       setBusy(false);
     }
-  };
+  }, []);
 
-  const handleEmailSubmit = async (event: FormEvent) => {
+  const handleEmailSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!email.trim()) return;
-    await requestOtp(email);
+    setEmailTouched(true);
+    if (mode === 'signup' && !consent) return; // Consent gate (button is disabled too).
+    const trimmed = email.trim().toLowerCase();
+    if (!EMAIL_PATTERN.test(trimmed)) {
+      emailRef.current?.focus();
+      return;
+    }
+    await requestOtp(trimmed);
   };
-
-  const [verifying, setVerifying] = useState(false);
 
   const handleVerifyOtp = useCallback(
     async (otpToVerify: string) => {
-      if (otpToVerify.length !== 6 || verifying) return;
+      if (otpToVerify.length !== OTP_LENGTH || verifying || busyRef.current) return;
       setVerifying(true);
-      setBusy(true);
+      setBusy('email');
       setError('');
       try {
-        const verifyOtpFn = httpsCallable<
-          { email: string; otp: string },
-          { success: boolean; data: { custom_token: string } }
-        >(functions, 'verifyOtp');
+        await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence);
+        try {
+          localStorage.setItem('cc:remember-me', keepSignedIn ? 'true' : 'false');
+        } catch {
+          /* ignore */
+        }
 
-        const result = await verifyOtpFn({
-          email: email.trim().toLowerCase(),
-          otp: otpToVerify,
-        });
+        const verifyOtpFn = httpsCallable<{ email: string; otp: string }, VerifyOtpResponse>(functions, 'verifyOtp');
+        const result = await verifyOtpFn({ email: email.trim().toLowerCase(), otp: otpToVerify });
 
+        clearSignedOutFlag();
+        // onAuthStateChanged in App.tsx swaps this screen for the app shell.
         await signInWithCustomToken(auth, result.data.data.custom_token);
       } catch (e) {
         setError(formatErrorMessage(e));
+        setOtp('');
         setBusy(false);
         setVerifying(false);
       }
     },
-    [email, verifying],
+    [email, keepSignedIn, verifying],
   );
 
-  const handleResendEmailOtp = async () => {
+  const handleResend = async () => {
     if (resendTimer > 0 || busy) return;
     setOtp('');
     await requestOtp(email);
   };
 
-  // ══════════════════════════════════════════════════════════════════════
-  //  GOOGLE SIGN-IN
-  // ══════════════════════════════════════════════════════════════════════
+  /* ── Google flow ───────────────────────────────────────────────────────── */
+
+  const finishGoogleLink = useCallback(async (user: { getIdToken(force?: boolean): Promise<string> }) => {
+    const idToken = await user.getIdToken();
+    const linkFn = httpsCallable<{ id_token: string }, GoogleLinkResponse>(functions, 'loginWithGoogle');
+    await linkFn({ id_token: idToken });
+    clearSignedOutFlag();
+    // Force-refresh so the custom claims set by the backend land on this client.
+    await user.getIdToken(true);
+  }, []);
 
   const handleGoogleSignIn = async () => {
-    setBusy(true);
+    if (busy) return;
+    setBusy('google');
     setError('');
+
     try {
-      // Dynamic import to avoid loading Google provider if not needed
-      const { GoogleAuthProvider } = await import('firebase/auth');
+      await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence);
+      try {
+        localStorage.setItem('cc:remember-me', keepSignedIn ? 'true' : 'false');
+      } catch {
+        /* ignore */
+      }
+
       const provider = new GoogleAuthProvider();
       provider.addScope('email');
       provider.addScope('profile');
+      provider.setCustomParameters({ prompt: 'select_account' });
+
+      // Popups are blocked or silently swallowed in some in-app browsers and on
+      // Safari/iOS; a top-level redirect is the reliable path there.
+      if (isSafari) {
+        await signInWithRedirect(auth, provider);
+        return;
+      }
 
       const result = await signInWithPopup(auth, provider);
-      const idToken = await result.user.getIdToken();
+      await finishGoogleLink(result.user);
+    } catch (e: unknown) {
+      const code = (e as { code?: string })?.code;
 
-      // Link the Google account with the backend, which verifies the college
-      // domain and sets the student's custom claims (role, college_id,
-      // verification_status). Any failure here (unregistered domain, wrong
-      // Firebase project, function unavailable, etc.) is a real login failure
-      // and must NOT be silently swallowed.
-      const linkFn = httpsCallable<
-        { id_token: string },
-        { success: boolean; data: { custom_token: string } }
-      >(functions, 'loginWithGoogle');
-
-      await linkFn({ id_token: idToken });
-
-      // Force-refresh the ID token so the custom claims the backend just set
-      // (role, college_id, verification_status) are present on subsequent calls.
-      await result.user.getIdToken(true);
-    } catch (e: any) {
-      if (e?.code === 'auth/popup-closed-by-user' || e?.code === 'auth/cancelled-popup-request') {
-        // User intentionally dismissed the popup — not an error.
-        setError('');
-      } else {
-        const message = e?.code === 'auth/popup-blocked'
-          ? 'Pop-up was blocked by your browser. Please allow pop-ups and try again.'
-          : formatErrorMessage(e);
-
-        // If sign-in created a Firebase user but the backend link failed, sign
-        // out so the user is never left half-authenticated with no Campus
-        // Connect account. App.tsx re-mounts AuthScreen after sign-out; store
-        // the message so that new mount can display it.
-        if (auth.currentUser) {
-          pendingAuthError = message;
-          await signOut(auth).catch(() => {});
+      // Fall back to a redirect when the popup cannot be used at all.
+      if (
+        code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment' ||
+        code === 'auth/web-storage-unsupported'
+      ) {
+        try {
+          const provider = new GoogleAuthProvider();
+          provider.addScope('email');
+          provider.addScope('profile');
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch (redirectError) {
+          setError(formatErrorMessage(redirectError));
+          return;
         }
-        setError(message);
       }
+
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setError(''); // Intentional dismissal — not an error.
+        return;
+      }
+
+      const message = formatErrorMessage(e);
+
+      // If sign-in created a Firebase user but the backend link failed, sign out
+      // so the user is never left half-authenticated with no Campus Connect
+      // account. The message survives the remount via pendingAuthError.
+      if (auth.currentUser) {
+        pendingAuthError = message;
+        await signOut(auth).catch(() => {});
+      }
+      setError(message);
     } finally {
       setBusy(false);
     }
   };
 
-  // NOTE: Phone-number login is intentionally disabled until a complete phone
-  // onboarding flow exists (phone verification → college identification →
-  // custom claims → student profile provisioning). Firebase phone auth alone
-  // cannot produce a Campus Connect student account, so offering it in the UI
-  // leaves users authenticated with Firebase but locked out of the app.
+  /* ── Navigation ────────────────────────────────────────────────────────── */
 
-  // ══════════════════════════════════════════════════════════════════════
-  //  RENDER
-  // ══════════════════════════════════════════════════════════════════════
+  const goToEmail = (nextMode: Mode) => {
+    setMode(nextMode);
+    setError('');
+    setEmailTouched(false);
+    setStep('email');
+  };
+
+  const goBack = () => {
+    if (busy) return;
+    setStep('method');
+    setOtp('');
+    setError('');
+    setCollegeName('');
+    setMaskedEmail('');
+    setEmailTouched(false);
+    setResendTimer(0);
+  };
+
+  const switchMode = (nextMode: Mode) => {
+    setMode(nextMode);
+    setConsent(false);
+    setError('');
+  };
+
+  /* ── Derived UI state ──────────────────────────────────────────────────── */
+
+  const emailValid = EMAIL_PATTERN.test(email.trim());
+  const showEmailError = emailTouched && !emailValid && email.trim().length > 0;
+  const googleBusy = busy === 'google';
+  const emailBusy = busy === 'email';
+  const locked = busy !== false;
+
+  /* ── Render ────────────────────────────────────────────────────────────── */
 
   return (
-    <main className={`auth-page ${entering ? 'auth-entering' : ''}`}>
-      {/* Decorative background elements */}
-      <div className="auth-bg-decoration">
-        <div className="auth-orb auth-orb-1" />
-        <div className="auth-orb auth-orb-2" />
-        <div className="auth-orb auth-orb-3" />
+    <main className="bp-auth">
+      <div className="bp-auth-bg" aria-hidden="true">
+        <div className="bp-orb bp-orb-1" />
+        <div className="bp-orb bp-orb-2" />
+        <div className="bp-orb bp-orb-3" />
       </div>
 
-      <section
-        className={`auth-card ${animating ? 'auth-card-exit' : 'auth-card-enter'}`}
-      >
-        {/* ─── LANDING: Method Selection ─────────────────────────────── */}
-        {authMethod === 'landing' && (
-          <div className={`auth-landing auth-landing-${authMode}`}>
-            <div className="auth-brand-row">
-              <div className="brand-mark brand-mark-animated">C</div>
-              <div className="auth-trust-badges">
-                <span className="trust-badge">🔒 Encrypted</span>
-                <span className="trust-badge">🎓 College-verified</span>
-              </div>
-            </div>
-
-            {/* Sign In / Sign Up toggles */}
-            <div className="auth-mode-selector">
-              <button
-                type="button"
-                className={`auth-mode-tab ${authMode === 'signin' ? 'active' : ''}`}
-                onClick={() => setAuthMode('signin')}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                className={`auth-mode-tab ${authMode === 'signup' ? 'active' : ''}`}
-                onClick={() => setAuthMode('signup')}
-              >
-                Create Account
-              </button>
-            </div>
-
-            <div className="auth-mode-content">
-              <p className="eyebrow">
-                {authMode === 'signin' ? 'COLLEGE-VERIFIED COMMUNITY' : 'JOIN CAMPUS CONNECT'}
-              </p>
-              <h1>
-                {authMode === 'signin' ? (
-                  <>
-                    Welcome back
-                    <br />
-                    <em>to campus.</em>
-                  </>
-                ) : (
-                  <>
-                    Meet your campus,
-                    <br />
-                    <em>for real.</em>
-                  </>
-                )}
-              </h1>
-              <p className="auth-copy">
-                {authMode === 'signin'
-                  ? 'Sign in with your official credentials to connect with classmates, projects, and events.'
-                  : 'A private space for verified students to find collaborators, friends, and meaningful campus connections.'}
-              </p>
-            </div>
-
-            {/* Google Sign-In */}
-            <button
-              className="auth-btn auth-btn-google"
-              onClick={handleGoogleSignIn}
-              disabled={busy}
-            >
-              <svg className="auth-btn-icon" viewBox="0 0 24 24" width="20" height="20">
-                <path
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
-                  fill="#4285F4"
-                />
-                <path
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  fill="#34A853"
-                />
-                <path
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                  fill="#FBBC05"
-                />
-                <path
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                  fill="#EA4335"
-                />
-              </svg>
-              {busy ? 'Connecting…' : authMode === 'signin' ? 'Sign in with Google' : 'Sign up with Google'}
-            </button>
-
-            {/* Divider */}
-            <div className="auth-divider">
-              <span>or continue with</span>
-            </div>
-
-            {/* Email */}
-            <button
-              className="auth-btn auth-btn-email"
-              onClick={() => navigateTo('email')}
-            >
-              <svg className="auth-btn-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-              </svg>
-              {authMode === 'signin' ? 'Sign in with Email' : 'Sign up with Email'}
-            </button>
-
-            {/* Stats */}
-            <div className="auth-stats">
-              <div className="auth-stat">
-                <strong>10K+</strong>
-                <span>Students</span>
-              </div>
-              <div className="auth-stat-divider" />
-              <div className="auth-stat">
-                <strong>50+</strong>
-                <span>Colleges</span>
-              </div>
-              <div className="auth-stat-divider" />
-              <div className="auth-stat">
-                <strong>100%</strong>
-                <span>Verified</span>
-              </div>
-            </div>
+      <div className="bp-auth-shell">
+        {/* ── Story panel ─────────────────────────────────────────────── */}
+        <aside className="bp-story">
+          <div className="bp-story-brand">
+            <BrandMark className="brand-mark-lg" />
+            <BrandWordmark animate />
+            <span className="bp-sr-only">Campus Connect</span>
           </div>
-        )}
 
-        {/* ─── EMAIL OTP FLOW ────────────────────────────────────────── */}
-        {authMethod === 'email' && (
-          <div className="auth-flow">
-            <button
-              type="button"
-              className="auth-back-btn"
-              onClick={goBack}
-              disabled={busy}
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m15 18-6-6 6-6" />
-              </svg>
-              Back
-            </button>
+          <div className="bp-story-copy">
+            <p className="bp-eyebrow">COLLEGE-VERIFIED COMMUNITY</p>
+            <h1>
+              Your campus,
+              <br />
+              <em>finally in one place.</em>
+            </h1>
+            <p className="bp-story-sub">
+              Meet verified classmates, build projects, and find the people who make
+              college worth remembering.
+            </p>
 
-            <div className="auth-flow-icon">
-              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#244c43" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-              </svg>
+            <ul className="bp-value-list">
+              <li>
+                <span className="bp-value-icon"><CapIcon size={17} /></span>
+                <div>
+                  <strong>Your college only</strong>
+                  <span>Nobody outside your campus can see you.</span>
+                </div>
+              </li>
+              <li>
+                <span className="bp-value-icon"><ShieldIcon size={17} /></span>
+                <div>
+                  <strong>Institutional email, not a form</strong>
+                  <span>Every account is tied to a verified college domain.</span>
+                </div>
+              </li>
+              <li>
+                <span className="bp-value-icon"><UsersIcon size={17} /></span>
+                <div>
+                  <strong>Real people, in person</strong>
+                  <span>Match for friends, study groups, hackathons and dating.</span>
+                </div>
+              </li>
+            </ul>
+          </div>
+
+          <p className="bp-story-foot">
+            <LockIcon size={13} /> Encrypted in transit · DPDP Act 2023 compliant
+          </p>
+        </aside>
+
+        {/* ── Auth card ───────────────────────────────────────────────── */}
+        <section className="bp-card" aria-labelledby="bp-card-title">
+          {/* Compact brand for narrow screens */}
+          <div className="bp-card-brand">
+            <BrandMark />
+            <BrandWordmark />
+          </div>
+
+          <div className="bp-card-body">
+            <div className="bp-head">
+              <span className={`bp-chip bp-chip-${mode}`}>{mode === 'signin' ? 'SIGN IN' : 'CREATE ACCOUNT'}</span>
+              {step !== 'method' && (
+                <button type="button" className="bp-back" onClick={goBack} disabled={locked}>
+                  <ArrowLeftIcon size={16} />
+                  Back
+                </button>
+              )}
             </div>
 
-            {emailStep === 'input' ? (
-              <>
-                <h2>Sign in with email</h2>
-                <p className="auth-flow-desc">
-                  Enter your official college email. We'll send a 6-digit
-                  verification code.
+            {/* STEP 1 — choose a sign-in method */}
+            {step === 'method' && (
+              <div className="bp-step" key={`method-${mode}`}>
+                <h2 id="bp-card-title">
+                  {mode === 'signin' ? 'Welcome back' : 'Create your account'}
+                </h2>
+                <p className="bp-sub">
+                  {mode === 'signin'
+                    ? 'Sign in with your official college credentials.'
+                    : 'Join with your college email — it takes about a minute.'}
+                </p>
+
+                <button
+                  type="button"
+                  className="bp-google"
+                  onClick={handleGoogleSignIn}
+                  disabled={locked}
+                  aria-busy={googleBusy}
+                >
+                  {googleBusy ? <span className="button-spinner bp-spinner-dark" /> : <GoogleMark />}
+                  <span>{googleBusy ? 'Opening Google…' : 'Continue with Google'}</span>
+                </button>
+
+                <div className="bp-divider">
+                  <span>or use your college email</span>
+                </div>
+
+                <button
+                  type="button"
+                  className="bp-email-cta"
+                  onClick={() => goToEmail(mode)}
+                  disabled={locked}
+                >
+                  <MailIcon size={19} />
+                  <span>Continue with college email</span>
+                  <ArrowRightIcon size={17} className="bp-cta-arrow" />
+                </button>
+
+                {/* Single confirmed rule that actually applies to this product */}
+                <p className="bp-rule">
+                  <CapIcon size={16} />
+                  <span>
+                    Only approved college domains can join.{' '}
+                    {mode === 'signin' ? 'New here?' : 'Already have an account?'}{' '}
+                    <button
+                      type="button"
+                      className="bp-rule-link"
+                      onClick={() => switchMode(mode === 'signin' ? 'signup' : 'signin')}
+                    >
+                      {mode === 'signin' ? 'Create an account' : 'Sign in'}
+                    </button>
+                  </span>
+                </p>
+              </div>
+            )}
+
+            {/* STEP 2 — college email */}
+            {step === 'email' && (
+              <div className="bp-step" key="email">
+                <h2 id="bp-card-title">{mode === 'signin' ? 'Sign in with email' : 'Join with your college email'}</h2>
+                <p className="bp-sub">
+                  Enter the email your college gave you — we&rsquo;ll send a 6-digit code to prove it&rsquo;s yours.
                 </p>
 
                 <form onSubmit={handleEmailSubmit} noValidate>
-                  <div className="auth-input-group">
-                    <label htmlFor="email-input" className="auth-floating-label">
-                      College email address
-                    </label>
-                    <input
-                      id="email-input"
-                      value={email}
-                      onChange={(e) => {
-                        setEmail(e.target.value);
-                        if (error) setError('');
-                      }}
-                      type="email"
-                      autoComplete="email"
-                      placeholder="you@college.edu"
-                      required
-                      disabled={busy}
-                      className="auth-input"
-                      autoFocus
-                    />
+                  <div className={`bp-field ${showEmailError ? 'has-error' : ''}`}>
+                    <label htmlFor="bp-email">College email address</label>
+                    <div className="bp-input-wrap">
+                      <MailIcon size={18} className="bp-input-icon" />
+                      <input
+                        id="bp-email"
+                        ref={emailRef}
+                        type="email"
+                        inputMode="email"
+                        autoComplete="email"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        placeholder="you@yourcollege.edu"
+                        value={email}
+                        onChange={(e) => {
+                          setEmail(e.target.value.replace(/\s/g, ''));
+                          if (error) setError('');
+                        }}
+                        onBlur={() => setEmailTouched(true)}
+                        disabled={emailBusy}
+                        aria-invalid={showEmailError}
+                        aria-describedby={showEmailError ? 'bp-email-error' : 'bp-email-hint'}
+                        required
+                      />
+                    </div>
+                    {showEmailError ? (
+                      <FieldError id="bp-email-error">Enter a valid email address, like you@college.edu.</FieldError>
+                    ) : (
+                      <p className="bp-hint" id="bp-email-hint">
+                        {emailValid ? (
+                          <span className="bp-hint-academy">
+                            <CapIcon size={14} />
+                            <span>
+                              Looks like a <strong>{collegeFromDomain(email)}</strong> address — we&rsquo;ll confirm
+                              your college on the next step.
+                            </span>
+                          </span>
+                        ) : (
+                          'We only accept emails from registered colleges.'
+                        )}
+                      </p>
+                    )}
                   </div>
+
                   <button
                     type="submit"
-                    className="auth-submit-btn"
-                    disabled={busy || !email.trim()}
+                    className="bp-primary"
+                    disabled={emailBusy || !email.trim() || (mode === 'signup' && !consent)}
+                    aria-describedby={mode === 'signup' && !consent ? 'bp-consent-hint' : undefined}
                   >
-                    {busy ? (
-                      <span className="auth-btn-loading">
+                    {emailBusy ? (
+                      <>
                         <span className="button-spinner" /> Sending code…
-                      </span>
+                      </>
                     ) : (
-                      'Send verification code'
+                      <>
+                        Send verification code <ArrowRightIcon size={17} />
+                      </>
                     )}
                   </button>
                 </form>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="auth-back-text"
-                  onClick={() => {
-                    setEmailStep('input');
-                    setOtp('');
-                    setError('');
-                  }}
-                  disabled={busy}
-                >
-                  ← Change email
-                </button>
 
-                <h2>Check your email</h2>
+                {mode === 'signup' && (
+                  <ConsentRow
+                    consent={consent}
+                    onToggle={() => setConsent((c) => !c)}
+                    onOpenLegal={setLegalDoc}
+                    disabled={emailBusy}
+                    hintId="bp-consent-hint"
+                  />
+                )}
+              </div>
+            )}
 
-                <div className="auth-email-info">
-                  <p className="auth-sent-to">
-                    Code sent to{' '}
-                    <strong>{maskEmail(email)}</strong>
-                  </p>
-                  {collegeName && (
-                    <p className="college-badge">🏫 {collegeName}</p>
-                  )}
+            {/* STEP 3 — OTP */}
+            {step === 'otp' && (
+              <div className="bp-step" key="otp">
+                <div className="bp-otp-top">
+                  <span className="bp-flow-icon">
+                    <MailIcon size={22} />
+                  </span>
+                  <button
+                    type="button"
+                    className="bp-change-email"
+                    onClick={() => {
+                      if (locked) return;
+                      setStep('email');
+                      setOtp('');
+                      setError('');
+                    }}
+                    disabled={locked}
+                  >
+                    Change email
+                  </button>
                 </div>
 
-                <div className="auth-otp-group">
-                  <label>Enter 6-digit code</label>
+                <h2 id="bp-card-title">Check your email</h2>
+                <p className="bp-sub">
+                  We sent a 6-digit code to <strong className="bp-email-strong">{maskedEmail || maskEmail(email)}</strong>
+                </p>
+                {collegeName && (
+                  <p className="bp-college">
+                    <CapIcon size={14} /> {collegeName}
+                  </p>
+                )}
+
+                <div className="bp-field">
+                  <label id="bp-otp-label">Enter your code</label>
                   <OtpInput
                     value={otp}
-                    onChange={setOtp}
+                    onChange={(next) => {
+                      setOtp(next);
+                      if (error) setError('');
+                    }}
                     onComplete={handleVerifyOtp}
-                    disabled={busy}
+                    disabled={emailBusy}
+                    length={OTP_LENGTH}
                   />
+                  <p className="bp-hint bp-hint-row">
+                    <ClockIcon size={13} /> Codes expire after 5 minutes.
+                  </p>
                 </div>
 
                 <button
                   type="button"
-                  className="auth-submit-btn"
+                  className="bp-primary"
                   onClick={() => handleVerifyOtp(otp)}
-                  disabled={busy || otp.length !== 6}
+                  disabled={emailBusy || otp.length !== OTP_LENGTH}
                 >
-                  {busy ? (
-                    <span className="auth-btn-loading">
+                  {emailBusy ? (
+                    <>
                       <span className="button-spinner" /> Verifying…
-                    </span>
+                    </>
                   ) : (
-                    'Verify & continue'
+                    <>
+                      Verify &amp; continue <ArrowRightIcon size={17} />
+                    </>
                   )}
                 </button>
 
-                <div className="auth-resend">
+                <div className="bp-resend">
                   {resendTimer > 0 ? (
-                    <p className="auth-resend-timer">
-                      Resend code in <strong>{resendTimer}s</strong>
+                    <p className="bp-resend-timer" aria-live="polite">
+                      Didn&rsquo;t get it? You can request a new code in <strong>{resendTimer}s</strong>
                     </p>
                   ) : (
-                    <button
-                      type="button"
-                      className="auth-resend-btn"
-                      onClick={handleResendEmailOtp}
-                      disabled={busy}
-                    >
-                      Didn't receive it? Send again ↻
+                    <button type="button" className="bp-resend-btn" onClick={handleResend} disabled={locked}>
+                      Didn&rsquo;t get it? Send a new code
                     </button>
                   )}
                 </div>
-              </>
+              </div>
+            )}
+
+            {/* Session preference — shown wherever the user is about to sign in */}
+            {step !== 'otp' && (
+              <label className="bp-check bp-check-session">
+                <input
+                  type="checkbox"
+                  checked={keepSignedIn}
+                  onChange={(e) => setKeepSignedIn(e.target.checked)}
+                  disabled={locked}
+                />
+                <span className="bp-check-box" aria-hidden="true"><CheckIcon size={12} /></span>
+                <span>
+                  Keep me signed in on this device
+                  <small>Uncheck on shared or lab computers.</small>
+                </span>
+              </label>
+            )}
+
+            {error && (
+              <div className="bp-alert" role="alert">
+                <AlertIcon size={17} />
+                <span>{error}</span>
+              </div>
             )}
           </div>
-        )}
 
-        {/* ─── ERROR BANNER ──────────────────────────────────────────── */}
-        {error && (
-          <div className="auth-error" role="alert">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            <span>{error}</span>
-          </div>
-        )}
+          <footer className="bp-foot">
+            <p className="bp-foot-note">
+              <LockIcon size={14} />
+              <span>
+                Your email is used only to verify your college and is never shown to other students.
+              </span>
+            </p>
+            <span className="bp-foot-badge">
+              <ShieldIcon size={12} /> Verified campus only
+            </span>
+            <nav className="bp-foot-legal" aria-label="Legal">
+              <button type="button" className="bp-legal-link" onClick={() => setLegalDoc('terms')}>
+                Terms of Service
+              </button>
+              <span aria-hidden="true">·</span>
+              <button type="button" className="bp-legal-link" onClick={() => setLegalDoc('privacy')}>
+                Privacy Policy
+              </button>
+              <span className="bp-foot-version">v{LEGAL_VERSION}</span>
+            </nav>
+          </footer>
+        </section>
+      </div>
 
-        {/* ─── LEGAL FOOTER ──────────────────────────────────────────── */}
-        <p className="auth-legal">
-          By continuing, you agree to our{' '}
-          <a href="#terms" onClick={(e) => e.preventDefault()}>
-            Terms of Service
-          </a>{' '}
-          and{' '}
-          <a href="#privacy" onClick={(e) => e.preventDefault()}>
-            Privacy Policy
-          </a>
-          . Only approved college domains can join.
-        </p>
-      </section>
+      {legalDoc && <LegalModal doc={legalDoc} onClose={closeLegal} />}
     </main>
+  );
+}
+
+/* ── Consent row (signup only) ───────────────────────────────────────────── */
+
+function ConsentRow({
+  consent,
+  onToggle,
+  onOpenLegal,
+  disabled,
+  hintId,
+}: {
+  consent: boolean;
+  onToggle: () => void;
+  onOpenLegal: (doc: LegalDocId) => void;
+  disabled: boolean;
+  hintId: string;
+}) {
+  return (
+    <div className={`bp-consent ${consent ? 'is-checked' : ''}`} id={hintId}>
+      <label className="bp-check">
+        <input
+          type="checkbox"
+          checked={consent}
+          onChange={onToggle}
+          disabled={disabled}
+          aria-describedby={`${hintId}-copy`}
+        />
+        <span className="bp-check-box" aria-hidden="true"><CheckIcon size={12} /></span>
+        <span className="bp-consent-main">
+          <strong>I agree to the Terms of Service and Privacy Policy</strong>
+          <small id={`${hintId}-copy`}>
+            Read the{' '}
+            <button type="button" className="bp-legal-link" onClick={() => onOpenLegal('terms')}>
+              Terms
+            </button>{' '}
+            or{' '}
+            <button type="button" className="bp-legal-link" onClick={() => onOpenLegal('privacy')}>
+              Privacy Policy
+            </button>{' '}
+            · version {LEGAL_VERSION}
+          </small>
+        </span>
+      </label>
+    </div>
   );
 }

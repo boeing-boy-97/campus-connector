@@ -8,9 +8,27 @@ Firebase Auth, Firestore, Cloud Storage, and the Cloud Functions deployed to
 
 - **College email (OTP)** — the primary flow. `sendOtp` → email → `verifyOtp` →
   custom token. Requires an *approved* college whose `domain` matches the email.
-- **Google** — Firebase popup sign-in, then `loginWithGoogle` verifies the college
-  domain and sets the student's custom claims. Backend rejections are surfaced to
-  the user (not swallowed).
+- **Google** — Firebase popup sign-in on desktop/Android, redirect sign-in on
+  Safari/iOS (and as the fallback when popups are blocked). `loginWithGoogle`
+  then verifies the college domain and sets the student's custom claims. Backend
+  rejections are surfaced to the user (not swallowed).
+
+## Authentication screen
+
+`src/components/AuthScreen.tsx` is the whole sign-in experience — a split
+"campus story" panel plus a focused auth card. Behaviour worth knowing:
+
+| Concern | Where | Notes |
+|---|---|---|
+| Session persistence | `Keep me signed in` checkbox | Writes `browserLocalPersistence` or `browserSessionPersistence` *before* signing in; remembered in `cc:remember-me`. |
+| Consent | signup email step | Checkbox must be ticked before an OTP is requested; the version sent to `sendOtp` is `LEGAL_VERSION` (`src/utils/terms.ts`). |
+| Legal copy | `src/utils/terms.ts` + `LegalModal` | Versioned, keyboard-tractable dialog. Bump `LEGAL_VERSION` **and** `LEGAL.CURRENT_TERMS_VERSION` in `shared/constants` together. |
+| Cross-tab sign-out | `src/utils/authGuard.ts` | `cc:signed-out` flag is set on every sign-out and cleared on every sign-in, so a session can't linger in another tab. |
+| Dead accounts | `authGuard.isSessionDead` | Forces a token refresh on boot; deleted/disabled accounts are signed out instead of rendering a broken shell. |
+
+The screen is responsive (story panel hidden below 980px), state transitions are
+animated, and `prefers-reduced-motion` is respected. Styles live in the
+`AUTH` block at the top of `src/index.css` and use the `--bp-*` design tokens.
 
 > **Phone-number login is intentionally disabled.** Firebase phone auth alone
 > cannot produce a Campus Connect student account (no college context / custom
